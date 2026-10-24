@@ -46,6 +46,8 @@ class OnDeviceAgentTest {
         // Anything it can't act on is Stuck, never a guess.
         assertEquals(AgentStep.Stuck, AgentStep.parse("""{"do":"tap"}"""))
         assertEquals(AgentStep.Stuck, AgentStep.parse("""{"do":"type","n":2}"""))
+        // On the phone it copied the prompt's placeholder.
+        assertEquals(AgentStep.Stuck, AgentStep.parse("""{"do":"type","n":"2","text":"..."}"""))
         assertEquals(AgentStep.Stuck, AgentStep.parse("I would tap the button"))
     }
 
@@ -65,6 +67,28 @@ class OnDeviceAgentTest {
         }
         assertEquals(false, OnDeviceAgent.wantsOn("Turn off Dark theme"))
         assertEquals(true, OnDeviceAgent.wantsOn("Turn on Dark theme"))
+    }
+
+    @Test
+    fun pagesAreLookedForBehindTheAppsMenuTabs() {
+        fun button(label: String) = ScreenElement(1, ScreenElement.Kind.BUTTON, label)
+        for (label in listOf("You", "Profile", "More options", "Open navigation drawer", "प्रोफ़ाइल")) {
+            assertEquals(label, true, OnDeviceAgent.isMenu(button(label)))
+        }
+        // Not a video titled "You belong with me", and not text.
+        assertEquals(false, OnDeviceAgent.isMenu(button("You belong with me - Taylor Swift (Official Video)")))
+        assertEquals(false, OnDeviceAgent.isMenu(button("Youtube Music")))
+        assertEquals(false, OnDeviceAgent.isMenu(ScreenElement(1, ScreenElement.Kind.TEXT, "You")))
+    }
+
+    @Test
+    fun onlyOnAndOffGoalsFlipSwitches() {
+        assertEquals(true, OnDeviceAgent.flips("Turn on Dark theme"))
+        assertEquals(true, OnDeviceAgent.flips("Turn off Dark theme"))
+        // Reaching a page must never flip a switch that happens to be on it.
+        assertEquals(false, OnDeviceAgent.flips("Open stopwatch"))
+        assertEquals(true, OnDeviceAgent.opensPage("Open Bluetooth"))
+        assertEquals(false, OnDeviceAgent.opensPage("Open Instagram and tell me how many likes my last post has"))
     }
 
     @Test

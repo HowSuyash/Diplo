@@ -49,6 +49,8 @@ class LocalBrainTest {
     fun chatKeepsOnlyTheReply() {
         val intent = LocalBrain.fromReply("""{"kind": "chat", "action": "joke", "params": {"x": "y"}, "speak": "नमस्ते!"}""")!!
         assertEquals(AgentIntent(AgentIntent.Kind.CHAT, speak = "नमस्ते!"), intent)
+        // Qwen3-0.6B on the phone named the kind itself.
+        assertEquals(AgentIntent.Kind.CHAT, LocalBrain.fromReply("""{"kind":"small talk","speak":"एक चुटकुला"}""")!!.kind)
     }
 
     @Test

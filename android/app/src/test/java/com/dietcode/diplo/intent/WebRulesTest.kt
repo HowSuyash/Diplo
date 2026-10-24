@@ -49,4 +49,12 @@ class WebRulesTest {
             assertNull(text, WebRules.parse(text))
         }
     }
+
+    @Test
+    fun smallTalkIsForTheOnDeviceModel() {
+        // "kaise" is a question word, and "namaste kaise ho" went to the web on the phone.
+        for (text in listOf("namaste kaise ho", "नमस्ते कैसे हो", "tum kaun ho", "ek joke sunao", "how are you")) {
+            assertNull(text, WebRules.parse(text))
+        }
+    }
 }

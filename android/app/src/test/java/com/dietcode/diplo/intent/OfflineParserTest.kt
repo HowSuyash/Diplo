@@ -195,6 +195,15 @@ class OfflineParserTest {
         assertEquals(true, OfflineParser.isStop("stop it"))
         assertEquals(false, OfflineParser.isStop("टॉर्च बंद करो"))
         assertEquals(false, OfflineParser.isStop("वाईफाई बंद कर दो"))
+        // On the phone this one silently stopped Diplo.
+        assertEquals(false, OfflineParser.isStop("clock app mein stopwatch kholo"))
+    }
+
+    @Test
+    fun aPageInsideAnAppIsNotAnAppName() {
+        assertEquals(null, OfflineParser.parse("clock app mein stopwatch kholo"))
+        assertEquals(null, OfflineParser.parse("meri instagram profile kholo"))
+        assertEquals(mapOf("app" to "youtube"), OfflineParser.parse("youtube kholo")!!.params)
     }
 
     @Test

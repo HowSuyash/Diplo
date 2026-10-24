@@ -29,6 +29,7 @@ object OfflineParser {
             """kholo|khol\s+do|open\s+karo|open\s+kar\s+do|chalao|launch\s+karo)$""",
     )
     private val openEnglish = Regex("""^(?:open|launch)\s+(.+)$""")
+    private val insideApp = Regex("""\s(?:mein|me|pe|par|में|पर|पे)\s""")
     // "यूट्यूब पर सिद्धू मूसे वाला का गाना लगाओ": play inside an app. Only play verbs, because
     // "इंटरनेट पर ... खोजो" is a web search.
     private val playIn = Regex(
@@ -151,7 +152,11 @@ object OfflineParser {
 
         (openTarget.find(text) ?: openEnglish.find(text))?.let { match ->
             val app = match.groupValues[1].trim()
-            return AgentIntent(AgentIntent.Kind.PHONE, "open_app", params = mapOf("app" to app), speak = "$app खोल रहा हूं।")
+            // "clock app mein stopwatch kholo" and "meri instagram profile kholo" open a page inside
+            // an app: AppTaskRules does that.
+            if (!insideApp.containsMatchIn(app) && AppTaskRules.parse(text) == null) {
+                return AgentIntent(AgentIntent.Kind.PHONE, "open_app", params = mapOf("app" to app), speak = "$app खोल रहा हूं।")
+            }
         }
 
         parseSetting(text)?.let { return it }
@@ -293,15 +298,15 @@ object OfflineParser {
         }
     }
 
-    // Not "बस": it also means "bus".
-    private val stopWords = listOf("stop", "ruko", "रुको")
+    // Not "बस": it also means "bus". Latin as whole words: "stopwatch kholo" is not a stop.
+    private val stopWords = Regex("""\b(stop|ruko)\b|रुको""")
     // Only on their own: "टॉर्च बंद करो" turns the torch off, it doesn't stop Diplo.
     private val stopPhrases = listOf("band karo", "band kar do", "बंद करो", "बंद कर दो")
     private val stopFillers = setOf("डिप्लो", "diplo", "अरे", "are", "please", "प्लीज", "ji", "जी")
 
     fun isStop(raw: String): Boolean {
         val text = raw.trim().lowercase()
-        if (stopWords.any { it in text }) return true
+        if (stopWords.containsMatchIn(text)) return true
         if (stopPhrases.none { it in text }) return false
         val rest = stopPhrases.fold(text) { t, phrase -> t.replace(phrase, " ") }
         return rest.split(Regex("""\s+""")).all { it.isEmpty() || it in stopFillers }

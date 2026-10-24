@@ -18,6 +18,7 @@ import com.dietcode.diplo.intent.AgentIntent
 import com.dietcode.diplo.intent.AppTaskRules
 import com.dietcode.diplo.intent.LocalBrain
 import com.dietcode.diplo.intent.OfflineParser
+import com.dietcode.diplo.intent.SmallTalk
 import com.dietcode.diplo.intent.WebRules
 import com.dietcode.diplo.net.BackendClient
 import com.dietcode.diplo.net.WebEvent
@@ -190,7 +191,8 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     // Private mode: nothing said leaves the phone, except a web question on its way to TinyFish.
     // The rules are instant; the on-device model takes a few seconds and only gets what they miss.
     private suspend fun understandOnPhone(text: String): AgentIntent =
-        OfflineParser.parse(text) ?: AppTaskRules.parse(text) ?: WebRules.parse(text) ?: LocalBrain.parse(appContext, text)
+        OfflineParser.parse(text) ?: AppTaskRules.parse(text) ?: WebRules.parse(text) ?: SmallTalk.reply(text)
+            ?: LocalBrain.parse(appContext, text)
             ?: AgentIntent(AgentIntent.Kind.UNKNOWN, speak = "माफ़ कीजिए, मैं समझ नहीं पाया। फिर से बोलिए।")
 
     // Cloud mode: the backend's model decides, and with Google ARTEMIS on it does phone tasks.
@@ -274,6 +276,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         stopNotification.show(heard)
         appTask = scope.launch {
             val outcome = agent.run(intent.params) { step ->
+                Log.i(TAG, "agent: $step")
                 (state as? UiState.Working)?.let { state = it.copy(steps = it.steps + step) }
             }
             appTask = null

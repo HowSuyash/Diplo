@@ -114,8 +114,9 @@ object LocalBrain {
                 appendLine("App: $app")
                 if (done.isNotEmpty()) appendLine("Done so far: ${done.joinToString("; ")}")
                 appendLine("Screen:")
-                // The top of the screen; every element shown costs prompt time on a phone CPU.
-                screen.take(STEP_ELEMENTS).forEach { appendLine(it.line()) }
+                // The top of the screen; every element shown costs prompt time on a phone CPU. Lines
+                // are cut short too: YouTube's video titles made a step take 15 s.
+                screen.take(STEP_ELEMENTS).forEach { appendLine(it.line().take(STEP_LINE_CHARS)) }
                 if (model.startsWith("qwen3")) append("/no_think")
             }
             val options = LlmOptions(model = model, maxOutputTokens = 40, temperature = 0f, systemPrompt = STEP_PROMPT)
@@ -170,7 +171,8 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
 "dark mode on karo" -> {"kind":"app","action":"app_task","params":{"app":"Settings","goal":"Turn on Dark theme","target":"Dark theme"}}
 "rapido se abes college ke liye bike book karo" -> {"kind":"app","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}"""
 
-    private const val STEP_ELEMENTS = 25
+    private const val STEP_ELEMENTS = 20
+    private const val STEP_LINE_CHARS = 50
     private const val ANSWER_LINES = 40
 
     private const val ANSWER_PROMPT = """Answer the user's question in one short sentence of simple Hindi (Devanagari), using only
@@ -231,7 +233,8 @@ Never tap a button that pays money."""
         }
         return when (kind) {
             "web" -> params["query"]?.let(WebRules::search)
-            "chat" -> json.optString("speak").trim().takeIf { it.isNotEmpty() }
+            // The 0.6B model also says kind "small talk" or "greeting" for chat.
+            "chat", "small talk", "small_talk", "smalltalk", "greeting" -> json.optString("speak").trim().takeIf { it.isNotEmpty() }
                 ?.let { AgentIntent(AgentIntent.Kind.CHAT, speak = it) }
             "phone" -> {
                 val template = speakTemplates[action] ?: return null

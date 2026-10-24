@@ -79,6 +79,9 @@ object WebRules {
 
     private fun isQuestion(lowered: String): Boolean {
         if (notWebLatin.containsMatchIn(lowered) || notWebDevanagari.any { it in lowered }) return false
+        // Small talk has question words too ("namaste kaise ho"), but it isn't for the web: on the
+        // phone the rules run before the model, unlike the backend.
+        if (SmallTalk.mentions(lowered)) return false
         return askLatin.containsMatchIn(lowered) || askDevanagari.any { it in lowered }
     }
 

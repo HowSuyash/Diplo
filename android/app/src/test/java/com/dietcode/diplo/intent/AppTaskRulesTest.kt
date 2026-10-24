@@ -49,6 +49,32 @@ class AppTaskRulesTest {
     }
 
     @Test
+    fun aPageInsideAnApp() {
+        assertEquals(
+            mapOf("app" to "clock", "goal" to "Open stopwatch", "target" to "stopwatch"),
+            task("clock app mein stopwatch kholo"),
+        )
+        assertEquals(
+            mapOf("app" to "settings", "goal" to "Open ब्लूटूथ", "target" to "ब्लूटूथ"),
+            task("settings में ब्लूटूथ खोलो"),
+        )
+        assertEquals(false, AppTaskRules.parse("clock app mein stopwatch kholo")!!.needsConfirmation)
+        assertEquals(
+            mapOf("app" to "youtube", "goal" to "Open history", "target" to "history"),
+            task("youtube mein meri history dikhao"),
+        )
+        assertEquals(
+            mapOf("app" to "Instagram", "goal" to "Open profile", "target" to "profile"),
+            task("meri instagram profile dikhao"),
+        )
+        assertEquals("settings", task("whatsapp ki settings kholo")["target"])
+        assertEquals("WhatsApp", task("whatsapp ki settings kholo")["app"])
+        assertNull(AppTaskRules.parse("instagram kholo")) // just the app: OfflineParser
+        // The word "app" is not part of its name.
+        assertEquals("youtube", task("youtube app pe arijit singh search karo")["app"])
+    }
+
+    @Test
     fun otherCommandsAreLeftAlone() {
         assertNull(AppTaskRules.parse("mummy ko bola main aa raha hoon")) // "bola" is not Ola
         assertNull(AppTaskRules.parse("PM Kisan yojana kya hai"))

@@ -44,7 +44,8 @@ sealed interface AgentStep {
             val n = json.optInt("n", 0)
             return when (json.optString("do").lowercase()) {
                 "tap" -> if (n > 0) Tap(n) else Stuck
-                "type" -> json.optString("text").trim().takeIf { n > 0 && it.isNotEmpty() }?.let { Type(n, it) } ?: Stuck
+                // Not the prompt's own "..." placeholder: the small model copies it.
+                "type" -> json.optString("text").trim().takeIf { n > 0 && it.any(Char::isLetterOrDigit) }?.let { Type(n, it) } ?: Stuck
                 "scroll" -> Scroll
                 "back" -> Back
                 "done" -> Done

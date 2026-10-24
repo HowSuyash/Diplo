@@ -30,7 +30,35 @@ object AppTaskRules {
 
     // "youtube pe arijit singh search karo" / "amazon में headphones खोजो"
     private val searchIn = Regex(
-        """^(.+?)\s+(?:pe|par|mein|me|पे|पर|में)\s+(.+?)\s+(?:search|khojo|dhundho|dhoondo|सर्च|खोजो|ढूंढो)(?:\s+(?:karo|kar do|करो|कर दो))?$""",
+        """^(.+?)\s+(?:app\s+|ऐप\s+)?(?:pe|par|mein|me|पे|पर|में)\s+(.+?)\s+(?:search|khojo|dhundho|dhoondo|सर्च|खोजो|ढूंढो)(?:\s+(?:karo|kar do|करो|कर दो))?$""",
+    )
+    // "clock app mein stopwatch kholo" / "youtube mein meri history dikhao" / "settings में ब्लूटूथ खोलो":
+    // a page inside an app. (The on-device model took the YouTube one for a web question.)
+    private val openIn = Regex(
+        """^(.+?)\s+(?:app\s+|ऐप\s+)?(?:pe|par|mein|me|पे|पर|में)\s+(.+?)\s+""" +
+            """(?:kholo|khol do|open karo|open kar do|dikhao|dikha do|खोलो|खोल दो|ओपन करो|ओपन कर दो|दिखाओ|दिखा दो)$""",
+    )
+    // "meri history" is the "History" page.
+    private val possessive = Regex("""^(?:meri|mera|mere|my|apni|apna|apne|मेरी|मेरा|मेरे|अपनी|अपना|अपने)\s+""")
+
+    // "meri instagram profile dikhao" / "whatsapp ki settings kholo": a page named along with its
+    // app. (The on-device model took the Instagram one for a call.)
+    private val apps = listOf(
+        "Instagram" to listOf("instagram", "insta", "इंस्टाग्राम"),
+        "WhatsApp" to listOf("whatsapp", "व्हाट्सएप", "व्हाट्सऐप"),
+        "YouTube" to listOf("youtube", "यूट्यूब"),
+        "Spotify" to listOf("spotify", "स्पॉटिफाई"),
+        "Gmail" to listOf("gmail", "जीमेल"),
+        "Maps" to listOf("maps", "मैप्स"),
+        "Clock" to listOf("clock", "घड़ी"),
+        "Settings" to listOf("settings", "setting", "सेटिंग्स", "सेटिंग"),
+    )
+    private val showVerb = Regex(
+        """\s+(?:kholo|khol do|open karo|open kar do|dikhao|dikha do|खोलो|खोल दो|ओपन करो|ओपन कर दो|दिखाओ|दिखा दो)$""",
+    )
+    private val joiners = setOf(
+        "ki", "ka", "ke", "की", "का", "के", "app", "ऐप", "mein", "me", "में", "pe", "par", "पे", "पर",
+        "meri", "mera", "mere", "my", "apni", "apna", "apne", "मेरी", "मेरा", "मेरे", "अपनी", "अपना", "अपने",
     )
 
     fun parse(raw: String): AgentIntent? {
@@ -56,7 +84,24 @@ object AppTaskRules {
             val (app, query) = match.destructured
             return task(mapOf("app" to app.trim(), "goal" to "Search for ${query.trim()}", "query" to query.trim(), "target" to ""))
         }
-        return null
+
+        openIn.find(text)?.let { match ->
+            val (app, named) = match.destructured
+            val page = named.trim().replace(possessive, "")
+            return task(mapOf("app" to app.trim(), "goal" to "Open $page", "target" to page))
+        }
+
+        return pageOfApp(text)
+    }
+
+    private fun pageOfApp(text: String): AgentIntent? {
+        val verb = showVerb.find(text) ?: return null
+        val body = text.substring(0, verb.range.first)
+        val (app, names) = apps.firstOrNull { (_, names) -> names.any { has(body, it) } } ?: return null
+        // What is left once the app and the little words are gone is the page: "profile".
+        val page = body.split(Regex("""\s+""")).filter { it.isNotEmpty() && it !in names && it !in joiners }.joinToString(" ")
+        if (page.isEmpty()) return null // just "instagram kholo": OfflineParser opens the app
+        return task(mapOf("app" to app, "goal" to "Open $page", "target" to page))
     }
 
     // The app names and ride words left in the matched destination ("an uber to cp" → "cp").
