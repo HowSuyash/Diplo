@@ -61,8 +61,10 @@ class DiploAccessibilityService : AccessibilityService() {
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || out.size >= max || node.isPassword) return
             if (node.isVisibleToUser) {
-                val label = (node.text ?: node.contentDescription ?: node.hintText)?.toString()?.trim().orEmpty()
-                    .take(60)
+                val own = (node.text ?: node.contentDescription ?: node.hintText)?.toString()?.trim().orEmpty()
+                // A button that is only a frame around its text is named by that text, as TalkBack
+                // reads it: Uber's "Choose Uber Go AC" is an unlabelled button around a text.
+                val label = own.ifEmpty { if (node.isClickable && !node.isPassword) innerText(node) else "" }.take(60)
                 val kind = when {
                     node.isEditable -> ScreenElement.Kind.INPUT
                     node.isCheckable -> ScreenElement.Kind.TOGGLE
@@ -79,6 +81,17 @@ class DiploAccessibilityService : AccessibilityService() {
         }
         walk(rootInActiveWindow)
         return out
+    }
+
+    // The texts inside [node], a few levels down, joined: the name a frame-only button shows.
+    private fun innerText(node: AccessibilityNodeInfo, depth: Int = 0): String {
+        if (depth > INNER_DEPTH) return ""
+        return (0 until node.childCount).mapNotNull { node.getChild(it) }
+            .filter { it.isVisibleToUser && !it.isPassword }
+            .joinToString(" ") { child ->
+                (child.text ?: child.contentDescription)?.toString()?.trim().orEmpty().ifEmpty { innerText(child, depth + 1) }
+            }
+            .replace(Regex("""\s+"""), " ").trim()
     }
 
     fun tap(element: Element): Boolean = clickNearest(element.node)
@@ -133,5 +146,7 @@ class DiploAccessibilityService : AccessibilityService() {
         @Volatile
         var instance: DiploAccessibilityService? = null
             private set
+
+        private const val INNER_DEPTH = 3
     }
 }

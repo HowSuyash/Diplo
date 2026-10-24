@@ -15,18 +15,18 @@ import com.dietcode.diplo.exec.DiploAccessibilityService
 import com.dietcode.diplo.exec.OnDeviceAgent
 import com.dietcode.diplo.exec.PhoneExecutor
 import com.dietcode.diplo.intent.AgentIntent
-import com.dietcode.diplo.intent.AppTaskRules
 import com.dietcode.diplo.intent.LocalBrain
 import com.dietcode.diplo.intent.OfflineParser
-import com.dietcode.diplo.intent.SmallTalk
 import com.dietcode.diplo.intent.WebRules
 import com.dietcode.diplo.net.BackendClient
 import com.dietcode.diplo.net.WebEvent
 import com.dietcode.diplo.voice.Speaker
 import com.dietcode.diplo.voice.SpeechInput
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.sse.EventSource
 import java.io.IOException
 
@@ -41,8 +41,8 @@ sealed interface UiState {
 
 /**
  * The listen -> understand -> confirm -> act -> reply loop. Lives on the main thread.
- * Private mode (the default) understands and acts on the phone: rules, the on-device model and
- * OnDeviceAgent; only web questions go to the backend, for TinyFish. Cloud mode
+ * Private mode (the default) does everything on the phone with OnDeviceAgent, an ARTEMIS-style
+ * agent on the on-device model; only web questions go to the backend, for TinyFish. Cloud mode
  * (diplo.cloud=true) asks the backend first and lets Google ARTEMIS do phone tasks.
  */
 class AgentController(context: Context, private val scope: CoroutineScope) {
@@ -73,7 +73,9 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private val executor = PhoneExecutor(context)
     private val backend = BackendClient()
     private val agent = OnDeviceAgent(appContext, executor)
-    private var appTask: Job? = null // OnDeviceAgent at work inside an app
+    private var appTask: Job? = null // OnDeviceAgent at work
+    private var agentWaiting: CompletableDeferred<String?>? = null // its question, waiting for an answer
+    private var agentConfirming = false // and whether that question wants a yes or no
 
     init {
         // Fetch the on-device model now, while there is a network, so it is there offline.
@@ -90,7 +92,6 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
 
     private var pending: AgentIntent? = null // waiting for "haan" / "nahi"
     private var clarifyContext: String? = null // earlier words when we asked a follow-up
-    private var clarifyAsked: AgentIntent? = null // and the follow-up itself
     private var webRun: EventSource? = null
     private var runIntent: AgentIntent? = null // what the running web or phone task is doing
 
@@ -125,6 +126,8 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             }
         }
         stopNotification.hide()
+        agentWaiting?.complete(null)
+        agentWaiting = null
         appTask?.cancel()
         appTask = null
         webRun?.cancel()
@@ -132,7 +135,6 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         runIntent = null
         pending = null
         clarifyContext = null
-        clarifyAsked = null
         turnText = null
         speech.cancel()
         speaker.stop()
@@ -149,6 +151,12 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
 
     /** On-screen Haan / Nahi buttons. */
     fun answer(yes: Boolean) {
+        agentWaiting?.let {
+            agentWaiting = null
+            speech.cancel()
+            it.complete(if (yes) "haan" else "nahi")
+            return
+        }
         val intent = pending ?: return
         pending = null
         speech.cancel()
@@ -168,6 +176,12 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             speaker.say("ठीक है, रुक गया।")
             return
         }
+        // The on-device agent asked something ("कहां जाना है?", "haan?"): this is the answer.
+        agentWaiting?.let {
+            agentWaiting = null
+            it.complete(text)
+            return
+        }
         pending?.let { intent ->
             when (OfflineParser.confirmation(text)) {
                 true -> answer(yes = true)
@@ -184,20 +198,13 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             appTask = null
             stopNotification.hide()
         }
-        // A place can take more words than an ID: "abes engineering college ghaziabad jana hai".
-        val forPlace = clarifyAsked?.params?.get("ask") == "destination" && text.trim().split(Regex("""\s+""")).size <= 8
-        val answering = clarifyContext != null && (answersQuestion(text) || forPlace)
-        val fullText = clarifyContext?.takeIf { answering }?.let { "$it $text" } ?: text
-        val asked = clarifyAsked?.takeIf { answering }
+        val fullText = clarifyContext?.takeIf { answersQuestion(text) }?.let { "$it $text" } ?: text
         clarifyContext = null
-        clarifyAsked = null
         turnText = fullText
         heard = text
         state = UiState.Thinking(text)
         scope.launch {
-            // "कहां जाना है?" -> "connaught place": the answer is the ride's destination.
-            val intent = asked?.takeIf { it.params["ask"] == "destination" }?.let { AppTaskRules.destinationAnswer(it, text) }
-                ?: (if (BuildConfig.CLOUD_MODE) understandInCloud(fullText) else understandOnPhone(fullText))
+            val intent = (if (BuildConfig.CLOUD_MODE) understandInCloud(fullText) else understandOnPhone(fullText))
                 ?: return@launch
             Log.i(TAG, "heard \"$fullText\" -> ${intent.kind} ${intent.action} ${intent.params}")
             handle(fullText, intent)
@@ -205,11 +212,9 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     }
 
     // Private mode: nothing said leaves the phone, except a web question on its way to TinyFish.
-    // The rules are instant; the on-device model takes a few seconds and only gets what they miss.
-    private suspend fun understandOnPhone(text: String): AgentIntent =
-        OfflineParser.parse(text) ?: AppTaskRules.parse(text) ?: WebRules.parse(text) ?: SmallTalk.reply(text)
-            ?: LocalBrain.parse(appContext, text)
-            ?: AgentIntent(AgentIntent.Kind.UNKNOWN, speak = "माफ़ कीजिए, मैं समझ नहीं पाया। फिर से बोलिए।")
+    // Everything else goes to the on-device agent, which plans it and does it like ARTEMIS.
+    private fun understandOnPhone(text: String): AgentIntent =
+        WebRules.parse(text) ?: AgentIntent(AgentIntent.Kind.PHONE, "agent_task", mapOf("request" to text))
 
     // Cloud mode: the backend's model decides, and with Google ARTEMIS on it does phone tasks.
     // Offline, the phone's rules, then the on-device model for what they miss.
@@ -232,24 +237,16 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         when {
             intent.kind == AgentIntent.Kind.CLARIFY -> {
                 clarifyContext = heard
-                clarifyAsked = intent
                 remember(intent.speak) // the answer may come as a new sentence: "उसको इंट्रो लिखकर भेज दो"
                 state = UiState.Thinking(heard)
                 speaker.say(intent.speak) { startListening() }
             }
             intent.kind == AgentIntent.Kind.UNKNOWN -> finish(intent.speak, failed = true)
             intent.kind == AgentIntent.Kind.CHAT -> finish(intent.speak) // small talk: the reply is the answer
-            // A task inside an app: the question repeats the user's own words, never the model's.
-            intent.action == "app_task" && intent.speak.isEmpty() -> handle(
-                heard,
-                intent.copy(
-                    speak = if (intent.needsConfirmation) "फ़ोन पर यह करूं: ${heard.trim().trimEnd('।', '.', '!', '?')}?"
-                    else "ठीक है, कर रहा हूं।",
-                ),
-            )
+            // The on-device agent asks "haan" itself, once it knows what the task is.
+            intent.action == "agent_task" -> runAgent(intent)
             // Find the contact before asking, so "haan" confirms the person actually saved on the phone.
-            intent.kind == AgentIntent.Kind.PHONE && intent.action != "app_task" &&
-                "contact" in intent.params && "number" !in intent.params -> {
+            intent.kind == AgentIntent.Kind.PHONE && "contact" in intent.params && "number" !in intent.params -> {
                 val spoken = intent.params.getValue("contact")
                 val contact = executor.findContact(spoken)
                 Log.i(TAG, "contact \"$spoken\" -> ${contact?.name}")
@@ -280,27 +277,57 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private fun execute(intent: AgentIntent) {
         when {
             intent.kind == AgentIntent.Kind.WEB -> runWeb(intent)
-            intent.action == "app_task" -> runAppTask(intent)
+            intent.action == "agent_task" -> runAgent(intent)
             else -> finish(executor.execute(intent))
         }
     }
 
-    // A task inside an app, done on the phone by OnDeviceAgent: nothing seen leaves it. The app
-    // stays in front at the end, showing the result, and Diplo says how it went.
-    private fun runAppTask(intent: AgentIntent) {
+    // The request, planned and done on the phone by OnDeviceAgent: nothing said or seen leaves it.
+    // The app stays in front at the end, showing the result, and Diplo says how it went.
+    private fun runAgent(intent: AgentIntent) {
+        val request = intent.params["request"] ?: return finish("यह काम समझ नहीं आया।", failed = true)
         state = UiState.Working()
-        speaker.say("ठीक है, कर रहा हूं।")
         stopNotification.show(heard)
         appTask?.cancel() // one task at a time
         appTask = scope.launch {
-            val outcome = agent.run(intent.params) { step ->
-                Log.i(TAG, "agent: $step")
-                (state as? UiState.Working)?.let { state = it.copy(steps = it.steps + step) }
-            }
+            val outcome = agent.run(request, agentIo)
             appTask = null
             stopNotification.hide()
             finish(outcome.speak, failed = !outcome.ok)
         }
+    }
+
+    private val agentIo = object : OnDeviceAgent.Io {
+        override fun step(text: String) {
+            Log.i(TAG, "agent: $text")
+            (state as? UiState.Working)?.let { state = it.copy(steps = it.steps + text) }
+        }
+
+        override fun say(text: String) = speaker.say(text)
+
+        override suspend fun confirm(question: String): Boolean =
+            OfflineParser.confirmation(hear(question, confirming = true).orEmpty()) == true
+
+        override suspend fun ask(question: String): String? = hear(question, confirming = false)
+    }
+
+    // The agent's question, asked with Diplo in front (the mic only works there), and the answer.
+    private suspend fun hear(question: String, confirming: Boolean): String? {
+        comeBack()
+        val waiting = CompletableDeferred<String?>()
+        agentWaiting = waiting
+        agentConfirming = confirming
+        val working = state as? UiState.Working
+        Log.i(TAG, "asked: $question")
+        // A yes-or-no question keeps the Haan / Nahi buttons up.
+        state = if (confirming) UiState.Confirm(question) else UiState.Listening
+        speaker.say(question) { if (agentWaiting === waiting) speech.listen() }
+        val answer = withTimeoutOrNull(ANSWER_MS) { waiting.await() }
+        if (agentWaiting === waiting) agentWaiting = null
+        speech.cancel()
+        Log.i(TAG, "answered: $answer")
+        state = working ?: UiState.Working()
+        return answer
     }
 
     private fun runWeb(intent: AgentIntent) {
@@ -377,6 +404,13 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     }
 
     private fun onSpeechError(code: Int) {
+        // The agent's question: a yes or no can still come from the buttons; anything else ends.
+        agentWaiting?.let {
+            if (agentConfirming) return
+            agentWaiting = null
+            it.complete(null)
+            return
+        }
         // Only errors from a live listen matter: cancel() (Stop, or typing instead) also reports one.
         if (state != UiState.Listening && pending == null) return
         pending?.let {
@@ -405,7 +439,6 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         speech.cancel() // never listen while speaking: the mic would hear Diplo
         // A follow-up question that ended (e.g. nothing heard) must not glue onto the next command.
         clarifyContext = null
-        clarifyAsked = null
         if (failed) turnText = null else remember(text)
         state = UiState.Done(text, failed)
         speaker.say(text)
@@ -421,6 +454,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private companion object {
         const val TAG = "Diplo"
         const val MAX_HISTORY = 3
+        const val ANSWER_MS = 25_000L
         val ALWAYS_ASK = setOf("call", "send_message", "save_contact", "delete_contact")
     }
 }

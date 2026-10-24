@@ -202,7 +202,6 @@ class OfflineParserTest {
     @Test
     fun aPageInsideAnAppIsNotAnAppName() {
         assertEquals(null, OfflineParser.parse("clock app mein stopwatch kholo"))
-        assertEquals(null, OfflineParser.parse("meri instagram profile kholo"))
         assertEquals(mapOf("app" to "youtube"), OfflineParser.parse("youtube kholo")!!.params)
     }
 

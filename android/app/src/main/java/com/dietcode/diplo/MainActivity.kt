@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -25,6 +26,8 @@ import com.dietcode.diplo.ui.AgentController
 import com.dietcode.diplo.ui.AppLanguage
 import com.dietcode.diplo.ui.OnboardingScreen
 import com.dietcode.diplo.ui.DiploScreen
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -144,6 +147,14 @@ class MainActivity : ComponentActivity() {
     private fun debugCommand(intent: Intent?) {
         if (!BuildConfig.DEBUG) return
         intent?.getStringExtra("diplo_text")?.let(agent::submitText)
+        // --ez diplo_dump true: step aside and log the app in front as the on-device agent sees it.
+        if (intent?.getBooleanExtra("diplo_dump", false) == true) {
+            moveTaskToBack(true)
+            lifecycleScope.launch {
+                delay(2500)
+                DiploAccessibilityService.instance?.elements()?.forEach { Log.d("Diplo", "screen ${it.seen.line()}") }
+            }
+        }
     }
 
     private fun refreshPermissions() {

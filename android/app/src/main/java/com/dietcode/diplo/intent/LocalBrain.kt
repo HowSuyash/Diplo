@@ -5,6 +5,7 @@ import ai.runanywhere.proto.v1.ModelCategory
 import android.content.Context
 import android.util.Log
 import com.dietcode.diplo.BuildConfig
+import com.dietcode.diplo.exec.AgentPlan
 import com.dietcode.diplo.exec.AgentStep
 import com.dietcode.diplo.exec.ScreenElement
 import com.runanywhere.sdk.foundation.errors.SDKException
@@ -20,12 +21,10 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * The on-device LLM: understands what the rules miss, and decides the on-device agent's next
- * step. RunAnywhere runs a small GGUF model with llama.cpp on the phone, so nothing said or seen
- * leaves it. Commands come back in the backend's Intent JSON (docs/API_CONTRACT.md), plus
- * kind "app" for a task inside an app ([com.dietcode.diplo.exec.OnDeviceAgent]).
- *
- * Order in the app (private mode): OfflineParser and WebRules (instant) -> LocalBrain.
+ * The on-device LLM. RunAnywhere runs a GGUF model with llama.cpp on the phone, so nothing said
+ * or seen leaves it. In private mode it is the on-device agent's planner and operator
+ * ([plan], [act]; [com.dietcode.diplo.exec.OnDeviceAgent]). In cloud mode, when the backend is
+ * unreachable, [parse] turns a command into the backend's Intent JSON (docs/API_CONTRACT.md).
  */
 object LocalBrain {
 
@@ -40,9 +39,17 @@ object LocalBrain {
     @Volatile
     private var loaded = false
 
-    // A short context keeps memory small. (Thread count can't be set: RunAnywhere 0.20.27 rejects
-    // LoadOptions.threads with "cannot be carried by the native load ABI yet".)
-    private val loadOptions = LoadOptions(contextLength = 1024)
+    // A short context keeps memory small: the agent's prompts stay under ~800 tokens. (Thread count
+    // can't be set: RunAnywhere 0.20.27 rejects LoadOptions.threads with "cannot be carried by the
+    // native load ABI yet".) diplo.localAccel=gpu or auto tries the phone's GPU.
+    private val loadOptions = LoadOptions(
+        accelerator = when (BuildConfig.LOCAL_ACCEL) {
+            "gpu" -> AcceleratorPolicy.GPU
+            "auto" -> AcceleratorPolicy.AUTO
+            else -> AcceleratorPolicy.CPU
+        },
+        contextLength = 1536,
+    )
 
     /** Starts the SDK and, while there is a network, downloads the model once. False if that failed. */
     suspend fun prepare(context: Context): Boolean = withContext(Dispatchers.IO) {
@@ -79,52 +86,61 @@ object LocalBrain {
         }
     }
 
-    /** A question answered from the [screen]'s text, on the phone; null if the model can't run. */
-    suspend fun answer(context: Context, question: String, screen: List<String>): String? = withContext(Dispatchers.Default) {
+    /**
+     * The planner, as Google ARTEMIS plans before acting: a reply, a question for what is missing,
+     * or the app, goal and steps of a task. Null when the model can't run or makes no sense.
+     */
+    suspend fun plan(context: Context, request: String): AgentPlan? = withContext(Dispatchers.Default) {
         try {
             start(context)
             load()
-            val prompt = buildString {
-                appendLine("Question: $question")
-                appendLine("Screen:")
-                screen.take(ANSWER_LINES).forEach { appendLine(it) }
-                if (model.startsWith("qwen3")) append("/no_think")
-            }
-            val options = LlmOptions(model = model, maxOutputTokens = 60, temperature = 0f, systemPrompt = ANSWER_PROMPT)
-            RunAnywhere.llm.generate(prompt, options).text.replace(thinking, "").trim().ifEmpty { null }
+            val prompt = if (model.startsWith("qwen3")) "$request /no_think" else request
+            val options = LlmOptions(model = model, maxOutputTokens = 160, temperature = 0f, systemPrompt = PLAN_PROMPT)
+            val started = System.currentTimeMillis()
+            val reply = RunAnywhere.llm.generate(prompt, options)
+            Log.i(TAG, "plan \"$request\" -> ${reply.text.trim()} (${System.currentTimeMillis() - started} ms)")
+            AgentPlan.parse(reply.text)
         } catch (e: SDKException) {
-            Log.w(TAG, "on-device answer failed: $e")
+            Log.w(TAG, "on-device plan failed: $e")
             null
         }
     }
 
-    /** The on-device agent's next move on this [screen]; Stuck if the model can't run. */
-    suspend fun step(
+    /**
+     * The operator: the next action on this [screen] toward [goal], following [steps], knowing
+     * what was [done]. [note] tells it when its last action changed nothing. Stuck if the model
+     * can't run.
+     */
+    suspend fun act(
         context: Context,
         goal: String,
+        steps: List<String>,
         app: String,
         screen: List<ScreenElement>,
         done: List<String>,
+        note: String?,
     ): AgentStep = withContext(Dispatchers.Default) {
         try {
             start(context)
             load()
             val prompt = buildString {
                 appendLine("Goal: $goal")
+                if (steps.isNotEmpty()) appendLine("Plan: ${steps.mapIndexed { i, s -> "${i + 1}. $s" }.joinToString(" ")}")
+                // The last few only: every word costs prompt time on a phone CPU.
+                appendLine("Done so far: ${done.takeLast(DONE_SHOWN).joinToString("; ").ifEmpty { "nothing yet" }}")
+                note?.let(::appendLine)
                 appendLine("App: $app")
-                if (done.isNotEmpty()) appendLine("Done so far: ${done.joinToString("; ")}")
                 appendLine("Screen:")
-                // The top of the screen; every element shown costs prompt time on a phone CPU. Lines
-                // are cut short too: YouTube's video titles made a step take 15 s.
-                screen.take(STEP_ELEMENTS).forEach { appendLine(it.line().take(STEP_LINE_CHARS)) }
+                screen.forEach { appendLine(it.line()) }
                 if (model.startsWith("qwen3")) append("/no_think")
             }
-            val options = LlmOptions(model = model, maxOutputTokens = 40, temperature = 0f, systemPrompt = STEP_PROMPT)
+            val options = LlmOptions(model = model, maxOutputTokens = 60, temperature = 0f, systemPrompt = ACT_PROMPT)
+            val started = System.currentTimeMillis()
             val reply = RunAnywhere.llm.generate(prompt, options)
-            Log.i(TAG, "on-device step for \"$goal\" -> ${reply.text} (${reply.tokensPerSecond} tok/s)")
+            Log.i(TAG, "act for \"$goal\" -> ${reply.text.trim()} (${System.currentTimeMillis() - started} ms)")
             AgentStep.parse(reply.text)
         } catch (e: SDKException) {
-            Log.w(TAG, "on-device step failed: $e")
+            Log.w(TAG, "on-device act failed: $e")
             AgentStep.Stuck
         }
     }
@@ -153,7 +169,9 @@ object LocalBrain {
         if (loaded) return
         starting.withLock {
             if (loaded) return
+            val started = System.currentTimeMillis()
             RunAnywhere.models.load(model, loadOptions)
+            Log.i(TAG, "on-device model $model loaded on ${BuildConfig.LOCAL_ACCEL} in ${System.currentTimeMillis() - started} ms")
             loaded = true
         }
     }
@@ -171,19 +189,32 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
 "dark mode on karo" -> {"kind":"app","action":"app_task","params":{"app":"Settings","goal":"Turn on Dark theme","target":"Dark theme"}}
 "rapido se abes college ke liye bike book karo" -> {"kind":"app","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}"""
 
-    private const val STEP_ELEMENTS = 20
-    private const val STEP_LINE_CHARS = 50
-    private const val ANSWER_LINES = 40
+    private const val DONE_SHOWN = 6
 
-    private const val ANSWER_PROMPT = """Answer the user's question in one short sentence of simple Hindi (Devanagari), using only
-the screen text given. Never invent numbers or names. If the screen doesn't show it, reply: स्क्रीन पर यह नहीं दिखा।"""
+    // The planner and the operator of the on-device agent (OnDeviceAgent), ARTEMIS's two roles.
+    // No app has a script: the examples only show the shape of a plan.
+    private const val PLAN_PROMPT = """You are Diplo, a phone assistant for Indian users. Read the user's request (Hindi, Hinglish or English) and reply with JSON only, one of:
+{"reply":"short answer in Hindi (Devanagari)"} for greetings, chat, or anything not done on the phone.
+{"ask":"question in Hindi"} when the task needs a detail the user did not give, like where to go.
+{"app":"app to open","goal":"the task in English with every detail the user gave","steps":["step", ...]} for anything done on the phone. Phone settings are in the Settings app.
+Examples:
+"namaste kaise ho" -> {"reply":"नमस्ते! मैं ठीक हूं। बताइए, क्या करूं?"}
+"ola book karo" -> {"ask":"कहां जाना है?"}
+"rapido se abes college ke liye bike book karo" -> {"app":"Rapido","goal":"Book a bike ride to ABES College","steps":["Open the destination search","Type ABES College","Pick the matching place","Choose Bike","Book the ride"]}
+"dark mode on karo" -> {"app":"Settings","goal":"Turn on Dark theme","steps":["Open Display","Turn on the Dark theme switch"]}"""
 
-    // For OnDeviceAgent: one action per call, so a short output.
-    private const val STEP_PROMPT = """You operate an Android phone for the user, one action at a time.
+    private const val ACT_PROMPT = """You operate an Android phone for the user, one action per turn, until the goal is reached.
 Reply with one JSON action only:
-{"do":"tap","n":4} taps element 4; {"do":"type","n":2,"text":"..."} types into input 2;
-{"do":"scroll"}; {"do":"back"}; {"do":"done"} when the goal is reached; {"do":"stuck"} if it can't be done.
-Never tap a button that pays money."""
+{"do":"tap","n":4} tap element 4
+{"do":"type","n":2,"text":"words"} type into input 2
+{"do":"scroll"} see more of the page; {"do":"back"}; {"do":"wait"} while the screen loads
+{"do":"open","app":"Name"} open another app
+{"do":"done","say":"what you did, or the answer the user asked for, in short Hindi"} once the goal is reached
+{"do":"ask","say":"question in Hindi"} only when the user must choose
+Follow the plan and use the numbers shown. If your last action changed nothing, do something else. Never tap a button that pays money."""
+
+    /** Whether a task acts for the user (books, sends, calls, pays), so it needs "haan" first. */
+    fun actsForUser(goal: String) = risky.containsMatchIn(goal)
 
     // Tasks that act for the user ask "haan" first; looking at or changing a setting doesn't.
     private val risky = Regex(
@@ -224,12 +255,11 @@ Never tap a button that pays money."""
         val params = raw?.keys()?.asSequence()?.associateWith { raw.optString(it).trim() }
             ?.filterValues { it.isNotEmpty() } ?: emptyMap()
         val kind = json.optString("kind").lowercase()
-        // A task inside an app, for OnDeviceAgent. Small models sometimes label it kind "phone".
+        // A task inside an app: the on-device agent plans and does it (and asks "haan" itself).
+        // Small models sometimes label it kind "phone".
         if (kind == "app" || action == "app_task") {
-            if (params["app"].isNullOrBlank()) return null
-            val goal = params["goal"].orEmpty()
-            // speak is filled in by AgentController, with the user's own words.
-            return AgentIntent(AgentIntent.Kind.PHONE, "app_task", params, needsConfirmation = risky.containsMatchIn(goal))
+            val goal = params["goal"].orEmpty().ifBlank { return null }
+            return AgentIntent(AgentIntent.Kind.PHONE, "agent_task", mapOf("request" to goal))
         }
         return when (kind) {
             "web" -> params["query"]?.let(WebRules::search)

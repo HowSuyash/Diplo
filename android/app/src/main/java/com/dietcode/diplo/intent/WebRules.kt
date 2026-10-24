@@ -43,6 +43,16 @@ object WebRules {
         "ज़ोमैटो", "जोमैटो", "अमेज़न", "फ्लिपकार्ट", "पेटीएम", "फोनपे", "सेटिंग", "कैमरा",
     )
 
+    // Small talk is for the on-device agent, which replies to it.
+    private val smallTalkLatin = Regex(
+        """\b(namaste|namaskar|hello|hi|hey|kaise ho|kaisi ho|kya haal|how are you|good morning|good night""" +
+            """|thank you|thanks|dhanyavad|shukriya|joke|tum kaun|tumhara naam|who are you|your name)\b""",
+    )
+    private val smallTalkDevanagari = listOf(
+        "नमस्ते", "नमस्कार", "कैसे हो", "कैसी हो", "क्या हाल", "धन्यवाद", "शुक्रिया", "जोक", "चुटकुला",
+        "तुम कौन", "तुम्हारा नाम", "आप कौन", "आपका नाम",
+    )
+
     /** A web flow or question, or null when it is not a web task. */
     fun parse(raw: String): AgentIntent? {
         val text = raw.trim()
@@ -81,7 +91,7 @@ object WebRules {
         if (notWebLatin.containsMatchIn(lowered) || notWebDevanagari.any { it in lowered }) return false
         // Small talk has question words too ("namaste kaise ho"), but it isn't for the web: on the
         // phone the rules run before the model, unlike the backend.
-        if (SmallTalk.mentions(lowered)) return false
+        if (smallTalkLatin.containsMatchIn(lowered) || smallTalkDevanagari.any { it in lowered }) return false
         return askLatin.containsMatchIn(lowered) || askDevanagari.any { it in lowered }
     }
 

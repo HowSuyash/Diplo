@@ -58,15 +58,11 @@ class LocalBrainTest {
         val dark = LocalBrain.fromReply(
             """{"kind":"app","action":"app_task","params":{"app":"Settings","goal":"Turn on Dark theme","target":"Dark theme"}}""",
         )!!
-        assertEquals("app_task", dark.action)
-        assertEquals("Dark theme", dark.params["target"])
-        assertEquals(false, dark.needsConfirmation) // changing a setting doesn't ask
-        assertEquals("", dark.speak) // AgentController asks in the user's own words
-        val ride = LocalBrain.fromReply(
-            """{"kind":"phone","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}""",
-        )!!
-        assertEquals(true, ride.needsConfirmation) // booking does
-        assertNull(LocalBrain.fromReply("""{"kind":"app","action":"app_task","params":{"goal":"Book a ride"}}"""))
+        // The agent plans it again and asks "haan" itself if it acts for the user.
+        assertEquals(AgentIntent(AgentIntent.Kind.PHONE, "agent_task", mapOf("request" to "Turn on Dark theme")), dark)
+        assertNull(LocalBrain.fromReply("""{"kind":"app","action":"app_task","params":{"app":"Uber"}}"""))
+        assertEquals(true, LocalBrain.actsForUser("Book a bike ride to ABES College"))
+        assertEquals(false, LocalBrain.actsForUser("Turn on Dark theme"))
     }
 
     @Test

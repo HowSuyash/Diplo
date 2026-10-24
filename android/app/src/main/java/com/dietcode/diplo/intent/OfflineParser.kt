@@ -152,9 +152,8 @@ object OfflineParser {
 
         (openTarget.find(text) ?: openEnglish.find(text))?.let { match ->
             val app = match.groupValues[1].trim()
-            // "clock app mein stopwatch kholo" and "meri instagram profile kholo" open a page inside
-            // an app: AppTaskRules does that.
-            if (!insideApp.containsMatchIn(app) && AppTaskRules.parse(text) == null) {
+            // "clock app mein stopwatch kholo" opens a page inside an app: a task for the agent.
+            if (!insideApp.containsMatchIn(app)) {
                 return AgentIntent(AgentIntent.Kind.PHONE, "open_app", params = mapOf("app" to app), speak = "$app खोल रहा हूं।")
             }
         }
