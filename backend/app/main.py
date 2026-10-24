@@ -34,6 +34,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "mock_tinyfish": config.MOCK_TINYFISH,
+        "mock_flows": [f for f in FLOWS if config.mocked(f)],
         "mock_search": config.MOCK_SEARCH,
         "llm": bool(config.LLM_BASE_URL),
         "flows": [*FLOWS, ask.FLOW_ID],
@@ -65,45 +66,74 @@ async def _mock_run(flow: Flow) -> AsyncIterator[dict[str, Any]]:
 
 
 _PORTAL_FAILED = "पोर्टल से जवाब नहीं मिला। थोड़ी देर बाद फिर कोशिश करें।"
+# An SSE comment: keeps tunnels from closing a quiet stream, and a failed write is how we notice
+# that the app hung up.
+_HEARTBEAT = ": heartbeat\n\n"
+_POLL_SECONDS = 3.0
+_TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
+
+
+def _outcome(flow: Flow, run: dict[str, Any]) -> dict[str, Any]:
+    """The app's result or error event for a finished run (a COMPLETE event or a polled run)."""
+    result = run.get("result") or {}
+    if run.get("status") == "COMPLETED":
+        return {"type": "result", "data": result, "speak": flow.summarize(result)}
+    error = run.get("error")
+    message = error.get("message") if isinstance(error, dict) else error
+    return {"type": "error", "message": message or run.get("status", "FAILED"), "speak": _PORTAL_FAILED}
+
+
+async def _poll_run(tf: TinyFish, run_id: str, flow: Flow, steps_seen: int) -> AsyncIterator[str]:
+    while True:
+        run = await tf.get_run(run_id)
+        for step in (run.get("steps") or [])[steps_seen:]:
+            steps_seen += 1
+            yield _sse({"type": "progress", "message": step.get("action", "")})
+        if run.get("status") in _TERMINAL:
+            yield _sse(_outcome(flow, run))
+            return
+        yield _HEARTBEAT
+        await asyncio.sleep(_POLL_SECONDS)
 
 
 async def _run_flow(req: WebRunRequest) -> AsyncIterator[str]:
     flow = FLOWS[req.flow]
     goal = flow.render_goal(req.params)
-    tf = None if config.MOCK_TINYFISH else TinyFish(config.TINYFISH_API_KEY)
+    tf = None if config.mocked(flow.id) else TinyFish(config.TINYFISH_API_KEY)
     events = _mock_run(flow) if tf is None else tf.stream_run(flow.url, goal, output_schema=flow.output_schema)
 
     # Translate TinyFish events into the small set the app understands (docs/API_CONTRACT.md).
-    run_id, finished = "", False
+    run_id, steps, finished = "", 0, False
     try:
-        async with aclosing(events):
-            async for ev in events:
-                kind = ev.get("type")
-                if kind == "STARTED":
-                    run_id = ev.get("run_id", "")
-                elif kind == "HEARTBEAT":
-                    # An SSE comment: keeps tunnels from closing a quiet stream, and a failed
-                    # write is how we notice that the app hung up.
-                    yield ": heartbeat\n\n"
-                elif kind == "PROGRESS":
-                    yield _sse({"type": "progress", "message": ev.get("purpose", "")})
-                elif kind == "STREAMING_URL":
-                    yield _sse({"type": "watch", "url": ev.get("streaming_url", "")})
-                elif kind == "COMPLETE":
-                    finished = True
-                    result = ev.get("result") or {}
-                    if ev.get("status") == "COMPLETED":
-                        yield _sse({"type": "result", "data": result, "speak": flow.summarize(result)})
-                    else:
-                        error = ev.get("error")
-                        message = error.get("message") if isinstance(error, dict) else error
-                        yield _sse({
-                            "type": "error",
-                            "message": message or ev.get("status", "FAILED"),
-                            "speak": _PORTAL_FAILED,
-                        })
-                    return
-        yield _sse({"type": "error", "message": "TinyFish stream ended early", "speak": _PORTAL_FAILED})
+        try:
+            async with aclosing(events):
+                async for ev in events:
+                    kind = ev.get("type")
+                    if kind == "STARTED":
+                        run_id = ev.get("run_id", "")
+                    elif kind == "HEARTBEAT":
+                        yield _HEARTBEAT
+                    elif kind == "PROGRESS":
+                        steps += 1
+                        yield _sse({"type": "progress", "message": ev.get("purpose", "")})
+                    elif kind == "STREAMING_URL":
+                        yield _sse({"type": "watch", "url": ev.get("streaming_url", "")})
+                    elif kind == "COMPLETE":
+                        finished = True
+                        yield _sse(_outcome(flow, ev))
+                        return
+        except httpx.HTTPError as e:
+            if not run_id:
+                raise
+            log.warning("TinyFish stream for run %s dropped (%r); polling the run instead", run_id, e)
+        if tf is None or not run_id:
+            yield _sse({"type": "error", "message": "TinyFish stream ended early", "speak": _PORTAL_FAILED})
+            return
+        # The stream ended before the run did (some networks reset long connections). The run
+        # carries on at TinyFish, so follow it by polling, as the TinyFish docs advise.
+        async for chunk in _poll_run(tf, run_id, flow, steps):
+            yield chunk
+        finished = True
     except TinyFishError as e:
         yield _sse({"type": "error", "message": str(e), "speak": "वेब एजेंट शुरू नहीं हो पाया।"})
     except httpx.HTTPError as e:

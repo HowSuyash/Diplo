@@ -6,6 +6,7 @@ os.environ["MOCK_TINYFISH"] = "1"
 os.environ["LLM_BASE_URL"] = ""
 os.environ["TINYFISH_API_KEY"] = ""  # keep tests offline even when .env has a real key
 
+import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import ask, main  # noqa: E402
@@ -173,3 +174,47 @@ def test_failed_run_reports_tinyfish_error_message(monkeypatch):
     events = _events("pnr_status", {"pnr": "1234567890"})
     assert events == [{"type": "error", "message": "Site blocked the agent", "speak": main._PORTAL_FAILED}]
     assert Failing.cancelled == []  # it finished on its own
+
+
+def test_dropped_stream_is_followed_by_polling_the_run(monkeypatch):
+    class Dropping(_FakeTinyFish):
+        polls = 0
+
+        async def stream_run(self, url, goal, **kwargs):
+            yield {"type": "STARTED", "run_id": "run-3"}
+            yield {"type": "PROGRESS", "run_id": "run-3", "purpose": "Opening the portal"}
+            raise httpx.ReadError("connection reset")
+
+        async def get_run(self, run_id):
+            Dropping.polls += 1
+            steps = [{"action": "Opening the portal"}, {"action": "Reading the result"}]
+            if Dropping.polls == 1:
+                return {"status": "RUNNING", "steps": steps}
+            return {"status": "COMPLETED", "steps": steps, "result": {"status": "CNF B2 34"}}
+
+    monkeypatch.setattr(main.config, "MOCK_TINYFISH", False)
+    monkeypatch.setattr(main, "TinyFish", Dropping)
+    monkeypatch.setattr(main, "_POLL_SECONDS", 0)
+    Dropping.cancelled = []
+    events = _events("pnr_status", {"pnr": "1234567890"})
+    assert [e["message"] for e in events[:-1]] == ["Opening the portal", "Reading the result"]
+    assert events[-1]["type"] == "result" and "CNF B2 34" in events[-1]["speak"]
+    assert Dropping.cancelled == []
+
+
+def test_unknown_pnr_gets_a_short_hindi_reply():
+    summarize = main.FLOWS["pnr_status"].summarize
+    assert summarize({"status": "Flushed PNR / PNR not yet generated", "details": "long English"}).startswith(
+        "यह पीएनआर नंबर नहीं मिला"
+    )
+    assert summarize({"status": "CNF B2 34", "details": "12951 Mumbai Rajdhani"}) == (
+        "आपकी टिकट का स्टेटस है: CNF B2 34. 12951 Mumbai Rajdhani"
+    )
+
+
+def test_flows_can_be_mocked_one_by_one(monkeypatch):
+    monkeypatch.setattr(main.config, "MOCK_TINYFISH", False)
+    monkeypatch.setattr(main.config, "MOCK_FLOWS", frozenset({"scholarship_status"}))
+    assert main.config.mocked("scholarship_status")
+    assert not main.config.mocked("pnr_status")
+    assert client.get("/health").json()["mock_flows"] == ["scholarship_status"]

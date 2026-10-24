@@ -1,5 +1,6 @@
 """Web flows: one goal template per portal task. A new portal is a new Flow, not a new scraper."""
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -41,14 +42,20 @@ def _status_schema(*extra: str) -> dict[str, Any]:
     return {"type": "object", "properties": props, "required": ["status"]}
 
 
-def _say_status(prefix: str) -> Callable[[dict[str, Any]], str]:
+def _say_status(prefix: str, *, not_found: str = "") -> Callable[[dict[str, Any]], str]:
     def summarize(result: dict[str, Any]) -> str:
         if result.get("needs_user_input"):
             return f"पोर्टल को और जानकारी चाहिए: {result['needs_user_input']}"
+        if not_found and _NOT_FOUND.search(result.get("status", "")):
+            return not_found
         details = f" {result['details']}" if result.get("details") else ""
         return f"{prefix} {result.get('status', 'पता नहीं चला')}.{details}"
 
     return summarize
+
+
+# How portals say the number doesn't exist (ConfirmTkt: "Flushed PNR / PNR not yet generated").
+_NOT_FOUND = re.compile(r"invalid|flushed|not found|not yet generated|no record", re.IGNORECASE)
 
 
 FLOWS: dict[str, Flow] = {
@@ -75,14 +82,22 @@ FLOWS: dict[str, Flow] = {
             title="Train PNR status",
             url=config.PNR_PORTAL_URL,
             goal=(
-                "Check the PNR status for PNR number {pnr}. Return JSON with status (booking"
-                " status of each passenger, e.g. CNF S4 23 or WL 12), details (train name, date"
-                " and chart status) and needs_user_input." + _SAFETY
+                "Check the PNR status for PNR number {pnr} on this page.\n"
+                "1. Close any pop-up, app-install banner or cookie banner first.\n"
+                "2. Type {pnr} into the PNR number box and press the button that checks the status.\n"
+                "3. Read the result. Return JSON with status (booking status of each passenger, e.g."
+                " CNF B2 34 or WL 12; if the site says the PNR is invalid, flushed or not found, put"
+                " that message here), details (at most 12 words, e.g. '12951 Mumbai Rajdhani, 24 Oct,"
+                " chart not prepared'; empty if the PNR was not found) and needs_user_input.\n"
+                "Do not log in, sign up, install the app or book anything." + _SAFETY
             ),
             required=("pnr",),
             ask={"pnr": "अपना दस अंकों का पीएनआर नंबर बोलिए।"},
             confirm="पीएनआर {pnr} का स्टेटस देखूं?",
-            summarize=_say_status("आपकी टिकट का स्टेटस है:"),
+            summarize=_say_status(
+                "आपकी टिकट का स्टेटस है:",
+                not_found="यह पीएनआर नंबर नहीं मिला। टिकट पर लिखा दस अंकों का नंबर जांच कर फिर बोलिए।",
+            ),
             output_schema=_status_schema(),
             mock_result={
                 "status": "CNF B2 34",

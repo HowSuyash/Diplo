@@ -126,6 +126,7 @@ async def llm_parse(text: str) -> Intent | None:
         return None
     try:
         raw = json.loads(content)
+        raw["action"] = raw.get("action") or "none"  # small models send null
         raw["params"] = {k: str(v) for k, v in (raw.get("params") or {}).items()}
         intent = Intent.model_validate(raw)
     except ValueError as e:

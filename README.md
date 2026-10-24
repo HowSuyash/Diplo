@@ -39,7 +39,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Put your TinyFish key (agent.tinyfish.ai/api-keys) in `.env`. Web questions then use live
   TinyFish Search + Fetch, which are free.
 - `MOCK_TINYFISH=1` keeps portal runs (TinyFish Agent, billed per step) fake, so the app can be
-  built and demoed without spending credits. Set it to `0` for real portal runs.
+  built without spending credits. `0` runs them all for real. `MOCK_TINYFISH=scholarship_status`
+  keeps only that flow fake: PNR status then runs live on confirmtkt.com (~6 steps, ~$0.10), and
+  on a laptop the live TinyFish browser shows beside the conversation.
 - For the LLM fallback, install [Ollama](https://ollama.com) and run `ollama pull llama3.2:3b`, or point `LLM_BASE_URL` at any OpenAI-compatible API (see `.env.example`).
 - Run the tests with `python -m pytest`.
 

@@ -10,14 +10,16 @@ Base URL: `http://<laptop-ip>:8000` (emulator: `http://10.0.2.2:8000`). All bodi
 ```json
 {
   "ok": true,
-  "mock_tinyfish": true,
+  "mock_tinyfish": false,
+  "mock_flows": ["scholarship_status"],
   "mock_search": false,
   "llm": true,
   "flows": ["scholarship_status", "pnr_status", "web_search"]
 }
 ```
 
-`mock_tinyfish`: portal flows (TinyFish Agent, billed per step) return canned results.
+`mock_tinyfish`: every portal flow (TinyFish Agent, billed per step) returns canned results.
+`mock_flows`: the portal flows that are canned right now; the others run on the real site.
 `mock_search`: `web_search` returns canned answers (only when there is no TinyFish API key).
 
 ## `GET /`

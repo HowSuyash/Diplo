@@ -57,6 +57,14 @@ class TinyFish:
                     if payload:
                         yield json.loads(payload)
 
+    async def get_run(self, run_id: str) -> dict[str, Any]:
+        """A run's current state (status, result, error, steps). How to follow a run whose stream dropped."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(f"{AGENT_BASE}/runs/{run_id}", headers=self._headers)
+        if resp.status_code != 200:
+            raise TinyFishError(resp.status_code, resp.text)
+        return resp.json()
+
     async def cancel(self, run_id: str) -> None:
         async with httpx.AsyncClient(timeout=15.0) as client:
             await client.post(f"{AGENT_BASE}/runs/{run_id}/cancel", headers=self._headers)
