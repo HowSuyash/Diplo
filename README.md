@@ -115,14 +115,21 @@ rules and then the RunAnywhere model (below), and does tasks inside apps with it
 1. **Open the app on the right screen** (`DeepLinks`): Uber with the drop already set, YouTube on
    its results, the Settings page for the task. Apps without a public link just open.
 2. **Rules first, instant:** tap what the user named ("Dark theme", flipping its switch only
-   if it isn't already as wanted), else search for it, else scroll.
+   if it isn't already as wanted). Not on screen: Settings searches for it; other apps look
+   behind their You/Profile/Menu tab (YouTube History is You → History); then scroll.
 3. **The on-device model for the rest:** the accessibility service lists the screen as numbered
    text (no screenshots), and the model picks one action: tap, type, scroll, back, done.
 
 The app never taps a final Pay button, never reads password fields, and asks "haan" before
 booking or sending. "रोकें" in the notification stops a task from any app. Only web questions
 leave the phone, through the backend to TinyFish. Common tasks (dark mode, rides in a named cab
-app, searching inside an app) skip the model entirely (`AppTaskRules`).
+app, searching inside an app, a page inside an app: "clock app mein stopwatch kholo", "meri
+instagram profile dikhao") skip the model entirely (`AppTaskRules`), and so does small talk
+(`SmallTalk`). A task stops on a locked phone and when its moves stop changing the screen.
+
+Measured on a Nothing Phone (1): dark mode 3.3 s, a Settings page 1.8 s, a YouTube search 1.8 s,
+the stopwatch 6 s, YouTube History 8 s, a web question 6 s (ARTEMIS took 74 s for dark mode).
+A step the 0.6B model decides takes 4-15 s.
 
 `diplo.cloud=true` in `android/local.properties` switches to cloud mode: every command goes to
 the backend (Groq), and phone tasks to Google ARTEMIS (below).
