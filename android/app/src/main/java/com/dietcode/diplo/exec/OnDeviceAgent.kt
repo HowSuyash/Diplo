@@ -44,6 +44,8 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         if (locked()) return LOCKED
         val opened = open(app, params, onStep) ?: return Outcome("$app नाम का ऐप नहीं मिला।", ok = false)
         delay(OPEN_MS)
+        // A cold start (Instagram) can still be a blank splash: wait for the screen to fill.
+        repeat(LOAD_TRIES) { if (service.elements().size < MIN_ELEMENTS) delay(LOAD_MS) }
         // A search the link already ran is done: the app is on its results.
         if (query.isNotEmpty() && target.isEmpty() && opened == Opened.ON_SCREEN) return Outcome(DONE, ok = true)
         // "settings mein bluetooth kholo": the link opened that very page.
@@ -149,16 +151,24 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
             }
             val choice = LocalBrain.step(context, goal, app, elements.map { it.seen }, done)
             Log.i(TAG, "agent step $step: $choice")
+            // The model takes seconds and the screen can move meanwhile (Instagram was still loading),
+            // so what it chose is found again on the screen as it is now, or not acted on at all.
+            val now = service.elements()
+            fun chosen(n: Int): DiploAccessibilityService.Element? {
+                val was = elements.getOrNull(n - 1)?.seen ?: return null
+                fun same(e: DiploAccessibilityService.Element) = e.seen.kind == was.kind && e.seen.label == was.label
+                return now.getOrNull(n - 1)?.takeIf(::same) ?: now.firstOrNull(::same)
+            }
             when (choice) {
                 is AgentStep.Tap -> {
-                    val element = elements.getOrNull(choice.n - 1) ?: return STUCK
+                    val element = chosen(choice.n) ?: return STUCK
                     if (isPayment(element.seen.label)) return PAYMENT
                     service.tap(element)
                     done += "tapped [${choice.n}] ${element.seen.label}"
                     onStep("दबाया: ${element.seen.label}")
                 }
                 is AgentStep.Type -> {
-                    val element = elements.getOrNull(choice.n - 1) ?: return STUCK
+                    val element = chosen(choice.n) ?: return STUCK
                     service.type(element, choice.text)
                     done += "typed \"${choice.text}\" into [${choice.n}]"
                     onStep("लिखा: ${choice.text}")
@@ -248,6 +258,9 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val OPEN_MS = 1800L
         private const val SETTLE_MS = 1200L
         private const val TASK_MS = 120_000L
+        private const val LOAD_TRIES = 8
+        private const val LOAD_MS = 500L
+        private const val MIN_ELEMENTS = 3
         private const val DONE = "हो गया।"
         private val STUCK = Outcome("यहां मैं आगे नहीं बढ़ पाया। बाकी आप कर लीजिए।", ok = false)
         private val LOCKED = Outcome("फ़ोन लॉक है। अनलॉक करके फिर से बोलिए।", ok = false)

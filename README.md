@@ -128,7 +128,7 @@ instagram profile dikhao") skip the model entirely (`AppTaskRules`), and so does
 (`SmallTalk`). A task stops on a locked phone and when its moves stop changing the screen.
 
 Measured on a Nothing Phone (1): dark mode 3.3 s, a Settings page 1.8 s, a YouTube search 1.8 s,
-the stopwatch 6 s, YouTube History 8 s, a web question 6 s (ARTEMIS took 74 s for dark mode).
+the stopwatch 6 s, YouTube History 5 s, Instagram profile from a cold start 7 s, a web question 6 s (ARTEMIS took 74 s for dark mode).
 A step the 0.6B model decides takes 4-15 s.
 
 `diplo.cloud=true` in `android/local.properties` switches to cloud mode: every command goes to

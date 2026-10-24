@@ -54,8 +54,9 @@ class DiploAccessibilityService : AccessibilityService() {
      * What the on-device agent sees: buttons, inputs, toggles, lists and short texts, top to
      * bottom, numbered from 1. Password fields are never included.
      */
-    // 80: a feed fills the first 40 and pushes out the tab bar at the bottom ("You", "Profile").
-    fun elements(max: Int = 80): List<Element> {
+    // 160: a feed fills the first nodes and pushes out the tab bar at the bottom ("You",
+    // "Profile"); Instagram's home is 131 nodes with "Profile" last.
+    fun elements(max: Int = 160): List<Element> {
         val out = mutableListOf<Element>()
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || out.size >= max || node.isPassword) return
