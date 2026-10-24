@@ -114,9 +114,10 @@ object OfflineParser {
     // "<name> ko [WhatsApp pe] bolo <message>" / "<name> को बोलो कि <message>" / "<name> ko <message> bol do"
     private val messageTarget = Regex("""^(.+?)\s+(?:को|ko)\s+(.+)$""")
     private val sayVerb = Regex(
-        """\s(?:bol(?:o|na|\s+do)|bhej(?:o|\s+do)|kaho|keh\s+do|batao|bata\s+do|likho|likh\s+do|""" +
+        // Informal imperatives too ("शिवम को भेज क्या कर रहा है"): bare भेज, बोल, लिख, बता, कह.
+        """\s(?:bol(?:o|na|\s+do)?|bhej(?:o|\s+do)?|kaho|keh(?:\s+do)?|batao|bata(?:\s+do)?|likho|likh(?:\s+do)?|""" +
             """(?:message|msg|whatsapp|sms)\s+kar(?:o|\s+do)|""" +
-            """बोलो|बोल\s+दो|भेजो|भेज\s+दो|कहो|कह\s+दो|बताओ|बता\s+दो|लिखो|लिख\s+दो|""" +
+            """बोलो|बोल\s+दो|बोल|भेजो|भेज\s+दो|भेज|कहो|कह\s+दो|कह|बताओ|बता\s+दो|बता|लिखो|लिख\s+दो|लिख|""" +
             """(?:मैसेज|व्हाट्सएप|एसएमएस)\s+कर(?:ो|\s+दो))(?=\s|$)""",
     )
     // "WhatsApp pe", "मैसेज में" and the like: where to send, not part of the name or message.

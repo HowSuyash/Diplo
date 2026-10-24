@@ -16,6 +16,7 @@ class SpeechInput(
     context: Context,
     private val onText: (String) -> Unit,
     private val onFailure: (Int) -> Unit,
+    private val onLevel: (Float) -> Unit = {}, // 0..1 loudness while listening, for the orb
 ) {
     private var preferOffline = true
     private var languageTag = "hi-IN"
@@ -23,11 +24,13 @@ class SpeechInput(
     private val recognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
         setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle?) {
+                onLevel(0f)
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 if (text.isNullOrBlank()) onFailure(SpeechRecognizer.ERROR_NO_MATCH) else onText(text)
             }
 
             override fun onError(error: Int) {
+                onLevel(0f)
                 // No offline Hindi pack on this phone: use the online recognizer from now on.
                 val noLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
                     error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
@@ -40,9 +43,10 @@ class SpeechInput(
             }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            // Roughly -2 (silence) to 10 dB (speaking up close).
+            override fun onRmsChanged(rmsdB: Float) = onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() = onLevel(0f)
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })

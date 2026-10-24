@@ -61,6 +61,16 @@ class OfflineParserTest {
     }
 
     @Test
+    fun informalImperatives() {
+        assertEquals(
+            mapOf("contact" to "शिवम", "message" to "क्या कर रहा है तू", "channel" to "whatsapp"),
+            message("शिवम को भेज क्या कर रहा है तू"),
+        )
+        assertEquals("हाय", message("शिवम को हाय लिख")["message"])
+        assertEquals("main aa raha hoon", message("Rahul ko bol main aa raha hoon")["message"])
+    }
+
+    @Test
     fun hiHeardAsHai() {
         assertEquals("हाय", message("कृतिका को व्हाट्सएप पर है लिखो")["message"])
         assertEquals("मैं घर पर है", message("मम्मी को बोलो मैं घर पर है")["message"])

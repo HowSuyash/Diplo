@@ -71,14 +71,24 @@ class PhoneExecutor(private val context: Context) {
         val chat = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digits&text=${Uri.encode(message)}"))
             .setPackage("com.whatsapp")
         if (!start(chat)) return "व्हाट्सएप नहीं खुला।"
-        // The user already said "haan", so tap Send once WhatsApp has opened the chat.
-        // TODO(track B): replace the fixed delay with a window-change event from the service.
-        Handler(Looper.getMainLooper()).postDelayed({
-            val tapped = SaarthiAccessibilityService.instance
-                ?.let { it.clickById("com.whatsapp:id/send") || it.clickByText("Send") }
-            Log.i("Saarthi", "WhatsApp Send tapped: $tapped")
-        }, 2500)
+        tapWhatsAppSend()
         return "${contact.name} को व्हाट्सएप पर मैसेज भेज रहा हूं।"
+    }
+
+    // The user already said "haan", so tap Send once WhatsApp has opened the chat. A cold start
+    // can take several seconds, so keep trying for ~9 s, and only while WhatsApp is in front.
+    private fun tapWhatsAppSend(attempt: Int = 0) {
+        Handler(Looper.getMainLooper()).postDelayed({
+            val service = SaarthiAccessibilityService.instance
+            val inWhatsApp = service?.activePackage() == "com.whatsapp"
+            val tapped = inWhatsApp && service != null &&
+                (service.clickById("com.whatsapp:id/send") || service.clickByText("Send"))
+            if (tapped || service == null || attempt >= 16) {
+                Log.i("Saarthi", "WhatsApp Send tapped: $tapped (try ${attempt + 1}, in WhatsApp: $inWhatsApp)")
+            } else {
+                tapWhatsAppSend(attempt + 1)
+            }
+        }, if (attempt == 0) 1200L else 500L)
     }
 
     private fun setAlarm(hour: Int?, minute: Int, label: String): String {

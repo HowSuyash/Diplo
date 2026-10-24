@@ -42,6 +42,9 @@ class SaarthiAccessibilityService : AccessibilityService() {
         return out
     }
 
+    /** The app in front, e.g. "com.whatsapp", so a tap never lands in the wrong app. */
+    fun activePackage(): String? = rootInActiveWindow?.packageName?.toString()
+
     /** Clicks the first view with this resource id, e.g. "com.whatsapp:id/send". */
     fun clickById(viewId: String): Boolean =
         rootInActiveWindow?.findAccessibilityNodeInfosByViewId(viewId)?.firstOrNull()?.let(::clickNearest) ?: false
