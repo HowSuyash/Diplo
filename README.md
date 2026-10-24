@@ -108,34 +108,29 @@ or run `sdkmanager "platforms;android-37.0"`.
 
 ## Private mode: everything on the phone (the default)
 
-Nothing said or seen on the phone leaves it. Diplo understands commands on the phone, with
-rules and then the RunAnywhere model (below), and does tasks inside apps with its own
-`OnDeviceAgent`. That is Google ARTEMIS's observe, decide, act loop, run on the phone:
+Nothing said or seen on the phone leaves it. `OnDeviceAgent` does what Google ARTEMIS does
+(below), with the on-device model (RunAnywhere) instead of Gemini, and no script for any app:
 
-1. **Open the app on the right screen** (`DeepLinks`): Uber with the drop already set, YouTube on
-   its results, the Settings page for the task. Apps without a public link just open.
-2. **Rules first, instant:** tap what the user named ("Dark theme", flipping its switch only
-   if it isn't already as wanted). Not on screen: Settings searches for it; other apps look
-   behind their You/Profile/Menu tab (YouTube History is You → History); then scroll.
-3. **The on-device model for the rest:** the accessibility service lists the screen as numbered
-   text (no screenshots), and the model picks one action: tap, type, scroll, back, done.
+1. **Plan:** the model reads the request and either replies (small talk, simple answers), asks
+   for what is missing ("ola book karo" → "कहां जाना है?"), or plans a task: the app, an English
+   goal with every detail the user gave, and the steps.
+2. **Act, one step at a time:** Diplo's accessibility service lists the screen as numbered text
+   (no screenshots), and the model sees the goal, the plan, what it did so far and that screen,
+   and picks one action: open an app, tap, type, scroll, back, wait, ask the user, or done.
+3. **Until done:** the model says what happened, or the answer the user asked for.
 
-The app never taps a final Pay button, never reads password fields, and asks "haan" before
-booking or sending. "रोकें" in the notification stops a task from any app. Only web questions
-leave the phone, through the backend to TinyFish. Common tasks (dark mode, rides in a named cab
-app, searching inside an app, a page inside an app: "clock app mein stopwatch kholo", "meri
-instagram profile dikhao") skip the model entirely (`AppTaskRules`), and so does small talk
-(`SmallTalk`). A task stops on a locked phone and when its moves stop changing the screen.
-
-Measured on a Nothing Phone (1): dark mode 3.3 s, a Settings page 1.8 s, a YouTube search 1.8 s,
-the stopwatch 6 s, YouTube History 5 s, Instagram profile from a cold start 7 s, a web question 6 s (ARTEMIS took 74 s for dark mode).
-A step the 0.6B model decides takes 4-15 s.
+Safety holds for every app, not per app: a goal that books, sends, calls or pays asks "haan"
+first, naming the goal; a Pay button is never tapped (UPI Lite needs no PIN); password fields are
+never read; and a task stops when the phone locks, the app closes, the user says something new,
+or its moves stop changing the screen. "रोकें" in the notification stops it from any app. Only web
+questions leave the phone, through the backend to TinyFish (`WebRules` picks them out).
 
 `diplo.cloud=true` in `android/local.properties` switches to cloud mode: every command goes to
 the backend (Groq), and phone tasks to Google ARTEMIS (below).
 
 Testing from a laptop without touching the phone (debug builds):
-`adb shell am start -n com.dietcode.diplo/.MainActivity --es diplo_text "dark mode on karo"`.
+`adb shell am start -n com.dietcode.diplo/.MainActivity --es diplo_text "dark mode on karo"`, and
+`--ez diplo_dump true` logs the app in front as the agent sees it.
 
 ## Cloud phone agent: Google ARTEMIS (diplo.cloud=true)
 
@@ -170,12 +165,12 @@ the runs.
 
 ## On-device LLM (RunAnywhere)
 
-Commands the rules don't catch are understood on the phone: `LocalBrain` runs a small model with
-[RunAnywhere](https://github.com/RunanywhereAI/runanywhere-sdks) (llama.cpp) and answers in the same
-Intent JSON, for phone actions, tasks inside apps, web questions and small talk. It also picks
-`OnDeviceAgent`'s steps. The model (Qwen3-0.6B Q4, ~400 MB) downloads once while online; point
-`diplo.localModel=` and `diplo.localModelUrl=` in `android/local.properties` at another GGUF (a
-bigger one understands more and runs slower). In cloud mode the backend's model answers first.
+`LocalBrain` runs the model on the phone with [RunAnywhere](https://github.com/RunanywhereAI/runanywhere-sdks)
+(llama.cpp): it is the agent's planner and operator in private mode, and in cloud mode it
+understands commands when the backend is unreachable. The model (Qwen3-1.7B Q4, ~1.1 GB; 0.6B was
+too weak to decide steps) downloads once while online. `diplo.localModel=` and
+`diplo.localModelUrl=` in `android/local.properties` point at another GGUF, and
+`diplo.localAccel=gpu` (or `auto`) runs it on the phone's GPU.
 
 ## How it works
 
