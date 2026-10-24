@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -87,12 +88,18 @@ class MainActivity : ComponentActivity() {
                             micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         },
                         onRequestPhone = {
+                            val phone = arrayOf(
+                                Manifest.permission.CALL_PHONE,
+                                Manifest.permission.READ_CONTACTS,
+                                Manifest.permission.WRITE_CONTACTS,
+                            )
+                            // Android 13+ asks for notifications: the "रोकें" one during a phone task.
                             phonePermissionsLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.CALL_PHONE,
-                                    Manifest.permission.READ_CONTACTS,
-                                    Manifest.permission.WRITE_CONTACTS,
-                                )
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    phone + Manifest.permission.POST_NOTIFICATIONS
+                                } else {
+                                    phone
+                                }
                             )
                         },
                         onOpenAccessibilitySettings = {

@@ -70,3 +70,7 @@ class Artemis:
 
     async def stop(self, task_id: str) -> None:
         await self._call("POST", "/api/stop", json={"session_id": task_id})
+
+    async def stop_all(self) -> None:
+        """Stops every running and queued task, whoever started it."""
+        await self._call("POST", "/api/stop", json={"all": True})

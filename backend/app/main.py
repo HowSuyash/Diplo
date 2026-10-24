@@ -57,6 +57,12 @@ async def parse_intent(req: IntentRequest) -> Intent:
     return await intent.parse(req.text, req.history)
 
 
+@app.post("/phone/stop")
+async def phone_stop() -> dict[str, bool]:
+    """Abort: stops every phone task, also one whose stream was already lost."""
+    return {"stopped": await phone.stop_all()}
+
+
 @app.post("/phone/answer", response_model=PhoneAnswer)
 async def phone_answer(req: PhoneAnswerRequest) -> PhoneAnswer:
     """After a phone_task: the result to speak, read from the screen the agent left."""

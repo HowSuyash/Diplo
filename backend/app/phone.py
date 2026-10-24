@@ -42,12 +42,16 @@ _QUEUED_SECONDS = 30
 # credits) for ~70 s per call while the task still reads "running". On Gemini's free tier, 503
 # "high demand" retries can hold one step for a minute, so leave room for that.
 _STALL_SECONDS = 120
+# The agent launching the app again and again means it is stuck on that app's first screen: it
+# relaunched Uber four times in a row, and each launch reset the stall timer.
+_SAME_LAUNCHES = 3
 _MOCK_STEP_SECONDS = 1.0
 
 DONE = "हो गया।"
 FAILED = "फ़ोन पर यह काम नहीं हो पाया।"
 NOT_CONNECTED = "फ़ोन लैपटॉप से जुड़ा नहीं है। USB या वायरलेस डिबगिंग से जोड़िए।"
 NOT_STARTED = "फ़ोन एजेंट शुरू नहीं हो पाया।"
+LOOPING = "ऐप ठीक से नहीं खुल पाया, इसलिए रोक दिया।"
 
 
 def enabled() -> bool:
@@ -84,6 +88,19 @@ def _readable(tool: str) -> str:
     return tool.replace("_", " ").strip().capitalize()
 
 
+async def stop_all() -> bool:
+    """The abort button: stops whatever ARTEMIS is doing on the phone, even a task whose stream
+    is already gone. False if there is no agent or it can't be reached."""
+    if config.MOCK_ARTEMIS or not config.ARTEMIS_URL:
+        return False
+    try:
+        await Artemis(config.ARTEMIS_URL).stop_all()
+        return True
+    except (ArtemisError, httpx.HTTPError) as e:
+        log.warning("Could not stop ARTEMIS: %r", e)
+        return False
+
+
 async def _mock(goal: str) -> AsyncIterator[dict[str, Any] | None]:
     """MOCK_ARTEMIS=1: canned steps, to build the app without ARTEMIS or a phone."""
     for step in ("Opening the app", "Tapping through the screens", "Checking the result"):
@@ -112,7 +129,7 @@ async def run(goal: str) -> AsyncIterator[dict[str, Any] | None]:
         yield {"type": "error", "message": str(e), "speak": NOT_STARTED}
         return
 
-    finished, seen = False, set()
+    finished, seen, launches = False, set(), 0
     now = asyncio.get_running_loop().time
     started = last_step = now()
     try:
@@ -121,7 +138,11 @@ async def run(goal: str) -> AsyncIterator[dict[str, Any] | None]:
                 if step_id not in seen:
                     seen.add(step_id)
                     last_step = now()
+                    launches = launches + 1 if tool == "manage_app" else 0
                     yield _progress(_readable(tool))
+            if launches >= _SAME_LAUNCHES:
+                yield {"type": "error", "message": f"ARTEMIS launched the app {launches} times in a row", "speak": LOOPING}
+                return
             status = await agent.status(task_id)
             if status in TERMINAL:
                 finished = True

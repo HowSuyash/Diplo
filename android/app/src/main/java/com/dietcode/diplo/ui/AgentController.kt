@@ -69,6 +69,13 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         // Fetch the on-device model now, while there is a network, so it is there offline.
         scope.launch { LocalBrain.prepare(appContext) }
     }
+
+    // "रोकें" in the notification, reachable while ARTEMIS has other apps in front.
+    private val stopNotification = StopNotification(appContext) {
+        stop()
+        comeBack()
+        speaker.say("ठीक है, रोक दिया।")
+    }
     private val speech = SpeechInput(context, onText = ::onHeard, onFailure = ::onSpeechError, onLevel = { level = it })
 
     private var pending: AgentIntent? = null // waiting for "haan" / "nahi"
@@ -93,8 +100,20 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         speech.listen()
     }
 
-    /** Kill switch: the Stop button or saying "ruko". */
+    /** Kill switch: the Stop button, saying "ruko", or "रोकें" in the notification. */
     fun stop() {
+        if (runIntent?.params?.get("flow") == "phone_task") {
+            // Closing the stream stops the task too, but the phone must stop even if the stream
+            // was already lost, so tell the agent directly as well.
+            scope.launch {
+                try {
+                    backend.stopPhone()
+                } catch (e: IOException) {
+                    Log.w(TAG, "could not reach the backend to stop the phone task: $e")
+                }
+            }
+        }
+        stopNotification.hide()
         webRun?.cancel()
         webRun = null
         runIntent = null
@@ -124,6 +143,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
 
     fun destroy() {
         stop()
+        stopNotification.destroy()
         speech.destroy()
         speaker.shutdown()
     }
@@ -226,6 +246,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             },
         )
         runIntent = intent
+        if (flow == "phone_task") stopNotification.show(heard)
         var source: EventSource? = null
         source = backend.runWebTask(flow, intent.params - "flow") { event ->
             // Hop to the main thread and drop events from a run the user already stopped.
@@ -241,12 +262,14 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             is WebEvent.Watch -> if (working != null) state = working.copy(watchUrl = event.url)
             is WebEvent.Result -> {
                 webRun = null
+                stopNotification.hide()
                 val run = runIntent
                 runIntent = null
                 if (run?.params?.get("flow") == "phone_task") sayPhoneResult(run, event.speak) else finish(event.speak)
             }
             is WebEvent.Error -> {
                 webRun = null
+                stopNotification.hide()
                 if (runIntent?.params?.get("flow") == "phone_task") comeBack()
                 runIntent = null
                 finish(event.speak, failed = true)

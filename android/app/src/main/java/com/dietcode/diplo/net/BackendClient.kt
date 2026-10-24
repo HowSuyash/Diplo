@@ -56,6 +56,12 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
             }
         }
 
+    /** Abort: stops every phone task on the laptop's agent, also one whose stream is already gone. */
+    suspend fun stopPhone() = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url("$baseUrl/phone/stop").post("".toRequestBody(json)).build()
+        http.newCall(request).execute().close()
+    }
+
     /** After a phone_task: what to say, read from the [screen] text the agent left (POST /phone/answer). */
     suspend fun answerFromScreen(goal: String, said: String, screen: List<String>): String =
         withContext(Dispatchers.IO) {

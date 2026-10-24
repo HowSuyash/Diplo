@@ -393,6 +393,9 @@ class _FakeArtemis:
     async def stop(self, task_id):
         self.stopped.append(task_id)
 
+    async def stop_all(self):
+        self.stopped.append("all")
+
 
 def _fake_artemis(monkeypatch, final: str) -> type[_FakeArtemis]:
     class Fake(_FakeArtemis):
@@ -470,6 +473,23 @@ def test_artemis_actions_are_read_from_its_trace_tree(monkeypatch):
     agent = main.phone.Artemis("http://artemis.test")
     monkeypatch.setattr(agent, "_call", call)
     assert asyncio.run(agent.steps("task-9")) == [("s1", "manage_app"), ("s2", "swipe")]
+
+
+def test_relaunching_the_same_app_is_stopped(monkeypatch):
+    # The agent launched Uber four times in a row; every launch reset the stall timer.
+    fake = _fake_artemis(monkeypatch, "running")
+    fake.steps = lambda self, task_id: asyncio.sleep(0, result=[(f"t{i}", "manage_app") for i in range(3)])
+    events = _events("phone_task", {"goal": "Open Uber and book a ride"})
+    assert events[-1]["speak"] == main.phone.LOOPING
+    assert fake.stopped == ["task-1"]
+
+
+def test_abort_stops_every_phone_task(monkeypatch):
+    fake = _fake_artemis(monkeypatch, "running")
+    assert client.post("/phone/stop").json() == {"stopped": True}
+    assert fake.stopped == ["all"]
+    _phone_agent_on(monkeypatch, mock=True)  # nothing real to stop
+    assert client.post("/phone/stop").json() == {"stopped": False}
 
 
 def test_hanging_up_stops_the_task_on_the_phone(monkeypatch):
