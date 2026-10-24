@@ -6,7 +6,12 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 .venv/
+venv/
+ENV/
 .pytest_cache/
 
 # Android / Gradle
@@ -16,9 +21,18 @@ android/build/
 android/app/build/
 android/.idea/
 android/captures/
+.externalNativeBuild/
+.cxx/
+**/.kotlin/
 *.iml
 *.apk
 *.aab
+
+# Archives & Temporary
+*.zip
+*.tar.gz
+*.log
+scratch/
 
 # Editors / OS
 .vscode/

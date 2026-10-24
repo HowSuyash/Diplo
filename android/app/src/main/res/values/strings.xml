@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Diplo</string>
+    <string name="accessibility_label">Diplo voice agent</string>
+    <string name="accessibility_description">Lets Diplo read the screen aloud and tap buttons (like WhatsApp Send) after you say \"haan\". Diplo never reads password fields.</string>
+</resources>

@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111118" media="(prefers-color-scheme: dark)">
+<meta name="description" content="Speak a goal in Hindi, Hinglish or English. Saarthi gets it done on the web with TinyFish.">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Saarthi</title>
+<!--
+  Saarthi web client: the same listen -> understand -> confirm -> act -> reply loop as the
+  Android app (AgentController.kt), in a phone or laptop browser. It talks to this backend's
+  /intent and /web/run (docs/API_CONTRACT.md). Voice uses the browser's speech APIs, which need
+  https or localhost; typing always works.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --surface-2: #efebe2;
+  --text: #1d1c24;
+  --muted: #676474;
+  --line: #e3ded2;
+  --brand: #2b3a8f;
+  --brand-soft: #e6e9fb;
+  --on-brand: #ffffff;
+  --accent: #d9661a;
+  --ok: #1d7f53;
+  --danger: #b93a26;
+  --danger-soft: #fbe6e2;
+  --shadow: 0 1px 2px rgb(20 20 40 / .05), 0 4px 14px rgb(20 20 40 / .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111118;
+    --surface: #1b1b24;
+    --surface-2: #25252f;
+    --text: #ecebf2;
+    --muted: #a09dae;
+    --line: #2f2f3c;
+    --brand: #9aa6ff;
+    --brand-soft: #262b4f;
+    --on-brand: #12142b;
+    --accent: #ee8a40;
+    --ok: #4cc38a;
+    --danger: #ff8a75;
+    --danger-soft: #3a1f1a;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 4px 14px rgb(0 0 0 / .25);
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Devanagari", "Nirmala UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: var(--brand); }
+button { font: inherit; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+
+/* Header */
+.top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand img { width: 36px; height: 36px; border-radius: 10px; flex: none; }
+.brand h1 { font-size: 18px; line-height: 1.15; margin: 0; letter-spacing: -.01em; }
+.brand p { font-size: 12px; margin: 0; color: var(--muted); white-space: nowrap; }
+.top-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 12px; font-weight: 600; padding: 5px 10px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted);
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.live { color: var(--ok); }
+.pill.mock { color: var(--accent); }
+.pill.down { color: var(--danger); }
+.lang {
+  min-width: 44px; min-height: 36px; padding: 4px 10px; cursor: pointer;
+  font-size: 13px; font-weight: 700; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+}
+
+/* Body: the conversation, plus the live browser beside it on wide screens */
+.body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.feed { overflow-y: auto; padding: 16px; overscroll-behavior: contain; }
+.list { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.browser { display: none; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface-2); }
+.browser header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; font-size: 14px; font-weight: 600; }
+.browser iframe { flex: 1; width: 100%; border: 0; background: var(--surface); }
+@media (min-width: 1100px) {
+  .body.has-browser { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
+  .body.has-browser .browser { display: flex; }
+}
+
+/* Welcome */
+.welcome { padding: 4px 0 8px; }
+.welcome h2 { font-size: clamp(26px, 7vw, 34px); line-height: 1.2; letter-spacing: -.02em; margin: 6px 0 8px; }
+.welcome > p { color: var(--muted); margin: 0 0 6px; max-width: 60ch; }
+.group { margin-top: 18px; }
+.group h3 { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  text-align: left; cursor: pointer; font-size: 15px; padding: 10px 14px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text); box-shadow: var(--shadow);
+}
+.chip:hover { border-color: var(--brand); }
+.note { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+
+/* Messages */
+.msg { max-width: 88%; padding: 10px 14px; border-radius: 18px; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--brand); color: var(--on-brand); border-bottom-right-radius: 6px; }
+.msg.user .via { display: block; font-size: 11px; opacity: .75; text-align: right; }
+.msg.agent { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 6px; box-shadow: var(--shadow); }
+.msg.agent.error { background: var(--danger-soft); border-color: transparent; }
+.msg.card { align-self: stretch; max-width: 100%; padding: 14px 16px; }
+.tech { display: block; margin-top: 6px; font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 18px;
+  font-weight: 600; text-decoration: none; cursor: pointer; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+}
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn.chosen { opacity: 1; outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Run card */
+.label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: var(--brand); background: var(--brand-soft); }
+.steps { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.steps li { display: flex; gap: 8px; align-items: flex-start; }
+.steps li::before {
+  content: "✓"; flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700; background: var(--ok); color: var(--surface);
+}
+.steps li.now { color: var(--text); }
+.steps li.now::before { content: ""; background: none; border: 2px solid var(--line); border-top-color: var(--brand); animation: spin .8s linear infinite; }
+.steps li.off::before { content: "■"; background: var(--muted); font-size: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.trail summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 10px; }
+.answer { font-size: 18px; line-height: 1.5; margin: 10px 0 0; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0 0; font-size: 15px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; }
+.sources { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sources a { display: block; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); color: var(--text); text-decoration: none; font-size: 14px; }
+.sources a:hover { outline: 1px solid var(--brand); }
+.sources small { display: block; font-size: 12px; color: var(--muted); }
+.watch { display: inline-block; margin-top: 10px; font-size: 14px; font-weight: 600; }
+
+.typing { display: flex; gap: 5px; padding: 14px 16px; }
+.typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+/* Dock */
+.dock { border-top: 1px solid var(--line); padding: 8px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.dock-inner { max-width: 760px; margin: 0 auto; }
+.hint { min-height: 22px; margin: 0 0 8px; font-size: 14px; text-align: center; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint.live { color: var(--text); font-weight: 600; }
+.row { display: flex; align-items: center; gap: 10px; }
+.composer {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 16px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+}
+.composer:focus-within { border-color: var(--brand); }
+.composer input { flex: 1; min-width: 0; padding: 9px 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 16px; }
+.send { flex: none; width: 40px; height: 40px; border: 0; border-radius: 50%; display: grid; place-items: center; cursor: pointer; background: var(--brand); color: var(--on-brand); }
+.send:disabled { opacity: .3; cursor: default; }
+.mic {
+  position: relative; flex: none; width: 60px; height: 60px; border: 0; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; background: var(--accent); color: #fff;
+  box-shadow: 0 4px 14px rgb(217 102 26 / .35); transition: transform .15s;
+}
+.mic:active { transform: scale(.94); }
+.mic svg { width: 26px; height: 26px; }
+.mic .i-stop { display: none; }
+.mic.busy { background: var(--danger); box-shadow: 0 4px 14px rgb(185 58 38 / .35); }
+.mic.busy .i-stop { display: block; }
+.mic.busy .i-mic { display: none; }
+.mic.off { background: var(--surface-2); color: var(--muted); box-shadow: none; }
+.mic.listening::after {
+  content: ""; position: absolute; inset: -6px; border-radius: 50%;
+  border: 3px solid var(--accent); animation: pulse 1.2s ease-out infinite;
+}
+@keyframes pulse { from { opacity: .9; transform: scale(.92); } to { opacity: 0; transform: scale(1.3); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <div>
+        <h1>Saarthi</h1>
+        <p>सारथी · voice agent</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span id="status" class="pill">Connecting</span>
+      <button id="lang" class="lang" type="button"></button>
+    </div>
+  </header>
+
+  <div id="body" class="body">
+    <main id="feed" class="feed">
+      <div id="list" class="list" aria-live="polite">
+        <section id="welcome" class="welcome">
+          <h2>बोलिए, सारथी कर देगा।</h2>
+          <p>Speak or type in Hindi, Hinglish or English. Saarthi answers from the live web and runs
+            portal tasks with TinyFish, and asks you before it does anything on a portal.</p>
+          <div class="group">
+            <h3>Ask the web · TinyFish Search + Fetch</h3>
+            <div class="chips">
+              <button class="chip" type="button">PM Kisan yojana kya hai</button>
+              <button class="chip" type="button">आज दिल्ली का मौसम कैसा है</button>
+              <button class="chip" type="button">Ayushman card kaise banaye</button>
+            </div>
+          </div>
+          <div class="group">
+            <h3>Portal tasks · TinyFish Agent</h3>
+            <div class="chips">
+              <button class="chip" type="button">Meri scholarship ka status batao</button>
+              <button class="chip" type="button">PNR 1234567890 ka status batao</button>
+            </div>
+            <p id="mock-note" class="note" hidden>Demo mode: portal runs are simulated, so nothing is charged.</p>
+          </div>
+        </section>
+      </div>
+    </main>
+    <aside class="browser" aria-label="Live browser">
+      <header>
+        <span>Live browser · TinyFish</span>
+        <a id="live-link" href="#" target="_blank" rel="noopener">Open ↗</a>
+      </header>
+      <iframe id="live-frame" title="Live TinyFish browser" referrerpolicy="no-referrer"></iframe>
+    </aside>
+  </div>
+
+  <footer class="dock">
+    <div class="dock-inner">
+      <p id="hint" class="hint"></p>
+      <div class="row">
+        <form id="form" class="composer">
+          <input id="text" type="text" autocomplete="off" enterkeyhint="send" placeholder="या यहां लिखिए… / or type here" aria-label="Type a command">
+          <button id="send" class="send" type="submit" aria-label="Send" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></svg>
+          </button>
+        </form>
+        <button id="mic" class="mic" type="button" aria-label="Speak">
+          <svg class="i-mic" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 1 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6.3-3.6a.9.9 0 0 0-1.8 0 4.5 4.5 0 0 1-9 0 .9.9 0 1 0-1.8 0 6.3 6.3 0 0 0 5.4 6.2V20H9a.9.9 0 1 0 0 1.8h6a.9.9 0 1 0 0-1.8h-2.1v-2.4a6.3 6.3 0 0 0 5.4-6.2Z"/></svg>
+          <svg class="i-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+        </button>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+const feed = $("#feed"), list = $("#list"), welcome = $("#welcome"), hintEl = $("#hint");
+const micBtn = $("#mic"), form = $("#form"), input = $("#text"), sendBtn = $("#send");
+const langBtn = $("#lang"), statusEl = $("#status"), bodyEl = $("#body");
+const liveFrame = $("#live-frame"), liveLink = $("#live-link");
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceOk = Boolean(SR) && window.isSecureContext;
+const ttsOk = "speechSynthesis" in window;
+const DEVANAGARI = /[ऀ-ॿ]/;
+
+// Same word lists as the Android app (OfflineParser.kt). "No" is checked first: "nahi haan" is a no.
+const YES = ["haan", "han", "हाँ", "हां", "हा", "yes", "ok", "okay", "kar do", "कर दो", "ji", "जी"];
+const NO = ["nahi", "nahin", "नहीं", "नही", "no", "mat", "मत", "cancel", "ruko", "रुको"];
+const STOP = ["stop", "ruko", "रुको", "band karo", "बंद करो"];
+const has = (text, words) => words.some((w) => text.trim().toLowerCase().includes(w));
+const confirmation = (text) => (has(text, NO) ? false : has(text, YES) ? true : null);
+
+const store = {
+  get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
+};
+
+const s = {
+  gen: 0,           // bumped by stop, so late replies from a stopped turn are dropped
+  pending: null,    // intent waiting for haan / nahi
+  confirmRow: null,
+  clarify: null,    // earlier words when we asked a follow-up
+  run: null,        // AbortController of the running /web/run stream
+  runCard: null,
+  rec: null,        // active SpeechRecognition
+  thinking: false,
+  voice: false,     // the user spoke (not typed) last turn, so listen again after asking
+};
+let lang = store.get("saarthi.lang") === "en-IN" ? "en-IN" : "hi-IN";
+const flowTitles = {};
+
+// ---------- DOM helpers ----------
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+}
+function scrollDown() { requestAnimationFrame(() => feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" })); }
+function add(node) { welcome.hidden = true; list.append(node); scrollDown(); return node; }
+function safeUrl(url) {
+  try { const u = new URL(url); return u.protocol === "https:" || u.protocol === "http:" ? u.href : null; }
+  catch { return null; }
+}
+function link(cls, text, url) {
+  const a = el("a", cls, text);
+  a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+  return a;
+}
+function hint(text, live = false) { hintEl.textContent = text; hintEl.classList.toggle("live", live); }
+function voiceHelp() {
+  return SR ? "Voice needs https or localhost · type below" : "Voice needs Chrome, Edge or Safari · type below";
+}
+
+function refresh() {
+  const busy = Boolean(s.run || s.thinking);
+  micBtn.classList.toggle("listening", Boolean(s.rec));
+  micBtn.classList.toggle("busy", busy && !s.rec);
+  micBtn.classList.toggle("off", !voiceOk && !busy);
+  micBtn.setAttribute("aria-label", s.rec ? "Stop listening" : busy ? "Stop" : "Speak");
+  sendBtn.disabled = !input.value.trim();
+  if (s.rec) return; // the hint shows the live transcript
+  if (s.run) hint("काम चल रहा है · tap ■ or say “ruko” to stop");
+  else if (s.thinking) hint("समझ रहा हूं…");
+  else if (s.pending) hint("“हां” या “नहीं” बोलिए · say yes or no");
+  else if (s.clarify) hint("जवाब बोलिए या लिखिए · answer by voice or text");
+  else hint(voiceOk ? "माइक दबाकर बोलिए · tap the mic and speak" : voiceHelp());
+}
+
+function userMsg(text, byVoice) {
+  const m = el("div", "msg user", text);
+  if (byVoice) m.append(el("span", "via", "🎤 spoken"));
+  return add(m);
+}
+function agentMsg(text, tone) { return add(el("div", "msg agent" + (tone ? " " + tone : ""), text)); }
+function say(text, { tone, tech, then } = {}) {
+  const m = agentMsg(text, tone);
+  if (tech) m.append(el("span", "tech", tech));
+  speak(text, then);
+  return m;
+}
+
+// ---------- Speech out ----------
+
+let voices = [];
+let speechId = 0;
+function loadVoices() { voices = ttsOk ? speechSynthesis.getVoices() : []; }
+if (ttsOk) { loadVoices(); speechSynthesis.addEventListener("voiceschanged", loadVoices); }
+
+function pickVoice(text) {
+  const wanted = DEVANAGARI.test(text) ? ["hi-in", "hi"] : ["en-in", "en-gb", "en"];
+  for (const w of wanted) {
+    const v = voices.find((v) => v.lang.toLowerCase().replace("_", "-").startsWith(w));
+    if (v) return v;
+  }
+  return null;
+}
+
+function speak(text, then) {
+  const id = ++speechId;
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    if (id === speechId && then) then();
+  };
+  if (!ttsOk || !text) { done(); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const v = pickVoice(text);
+  u.lang = v ? v.lang : DEVANAGARI.test(text) ? "hi-IN" : "en-IN";
+  if (v) u.voice = v;
+  u.onend = done;
+  u.onerror = done;
+  speechSynthesis.speak(u);
+  // Some browsers never fire onend (no voice installed, tab in background), so also poll.
+  const check = () => {
+    if (finished) return;
+    if (speechSynthesis.speaking || speechSynthesis.pending) setTimeout(check, 400);
+    else done();
+  };
+  setTimeout(check, 1500);
+}
+function shush() { speechId++; if (ttsOk) speechSynthesis.cancel(); }
+
+// ---------- Speech in ----------
+
+function listen() {
+  if (!voiceOk) { hint(voiceHelp()); input.focus(); return; }
+  shush();
+  stopListening();
+  const rec = new SR();
+  rec.lang = lang;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+  let heardText = "", problem = "";
+  rec.onresult = (e) => {
+    let interim = "";
+    heardText = "";
+    for (let i = 0; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) heardText += r[0].transcript; else interim += r[0].transcript;
+    }
+    hint(heardText + interim || "सुन रहा हूं…", true);
+  };
+  rec.onerror = (e) => {
+    problem = {
+      "not-allowed": "माइक की इजाज़त दीजिए · allow the microphone",
+      "service-not-allowed": "माइक की इजाज़त दीजिए · allow the microphone",
+      "no-speech": "कुछ सुनाई नहीं दिया · didn't catch that, tap the mic again",
+      "network": "आवाज़ पहचानने के लिए इंटरनेट चाहिए · voice needs internet",
+      "audio-capture": "माइक नहीं मिला · no microphone found",
+    }[e.error] || "";
+  };
+  rec.onend = () => {
+    if (s.rec !== rec) return; // aborted on purpose
+    s.rec = null;
+    if (heardText.trim()) { heard(heardText, true); return; }
+    refresh();
+    if (problem) hint(problem);
+  };
+  s.rec = rec;
+  try { rec.start(); } catch { s.rec = null; refresh(); return; }
+  refresh();
+  hint("सुन रहा हूं… · listening", true);
+}
+function stopListening() {
+  const rec = s.rec;
+  s.rec = null;
+  if (rec) try { rec.abort(); } catch { /* already stopped */ }
+}
+
+// ---------- The agent loop ----------
+
+async function postJSON(url, body) {
+  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+}
+
+async function heard(raw, byVoice) {
+  const text = raw.trim();
+  if (!text) return;
+  s.voice = byVoice;
+  userMsg(text, byVoice);
+
+  if (has(text, STOP)) { stop(); say("ठीक है, रुक गया।"); return; }
+  if (s.pending) {
+    const yes = confirmation(text);
+    if (yes === null) askAgain(); else answer(yes);
+    return;
+  }
+  if (s.run) { say("अभी एक काम चल रहा है। रोकने के लिए “रुको” बोलिए।"); return; }
+
+  const full = s.clarify ? `${s.clarify} ${text}` : text;
+  s.clarify = null;
+  const gen = s.gen;
+  s.thinking = true;
+  refresh();
+  const dots = add(el("div", "msg agent typing"));
+  dots.append(el("span"), el("span"), el("span"));
+  let intent;
+  try {
+    intent = await postJSON("/intent", { text: full, lang });
+  } catch (e) {
+    if (gen !== s.gen) return;
+    dots.remove();
+    s.thinking = false;
+    refresh();
+    say("सर्वर से कनेक्शन नहीं हुआ।", { tone: "error", tech: String(e.message || e) });
+    return;
+  }
+  dots.remove();
+  if (gen !== s.gen) return; // stopped while thinking
+  s.thinking = false;
+  handle(full, intent);
+  refresh();
+}
+
+function handle(heardText, intent) {
+  if (intent.kind === "clarify") {
+    s.clarify = heardText;
+    say(intent.speak, { then: () => { if (s.clarify && s.voice) listen(); } });
+    if (!s.voice) input.focus();
+  } else if (intent.kind === "unknown") {
+    say(intent.speak || "माफ़ कीजिए, मैं समझ नहीं पाया।", { tone: "error" });
+  } else if (intent.kind === "phone") {
+    phoneCard(intent);
+  } else if (intent.needs_confirmation) {
+    s.pending = intent;
+    askConfirm(intent.speak);
+  } else {
+    runWeb(intent);
+  }
+}
+
+function askConfirm(question) {
+  const m = agentMsg(question);
+  const row = el("div", "actions");
+  const yes = el("button", "btn primary", "हां · Yes");
+  const no = el("button", "btn", "नहीं · No");
+  yes.type = no.type = "button";
+  yes.onclick = () => answer(true);
+  no.onclick = () => answer(false);
+  row.append(yes, no);
+  m.append(row);
+  s.confirmRow = row;
+  scrollDown();
+  speak(question, () => { if (s.pending && s.voice) listen(); });
+}
+function askAgain() {
+  say("हां या नहीं?", { then: () => { if (s.pending && s.voice) listen(); } });
+}
+function closeConfirm(chosen) {
+  const row = s.confirmRow;
+  s.confirmRow = null;
+  if (!row) return;
+  row.querySelectorAll("button").forEach((b, i) => {
+    b.disabled = true;
+    if (i === chosen) b.classList.add("chosen");
+  });
+}
+function answer(yes) {
+  const intent = s.pending;
+  if (!intent) return;
+  s.pending = null;
+  stopListening();
+  closeConfirm(yes ? 0 : 1);
+  if (yes) runWeb(intent); else say("ठीक है, नहीं किया।");
+  refresh();
+}
+
+const PHONE = {
+  call: (p) => `📞 Call ${p.contact}`,
+  send_message: (p) => `💬 ${p.channel === "sms" ? "SMS" : "WhatsApp"} to ${p.contact}: “${p.message || ""}”`,
+  set_alarm: (p) => `⏰ Alarm at ${String(p.hour).padStart(2, "0")}:${String(p.minute || 0).padStart(2, "0")}`,
+  read_screen: () => "📖 Read the screen aloud",
+};
+function phoneCard(intent) {
+  const p = intent.params || {};
+  const m = agentMsg("");
+  m.classList.add("card");
+  const label = el("div", "label");
+  label.append(el("span", null, "Phone command"), el("span", "tag", "Android app"));
+  m.append(label, el("p", "answer", (PHONE[intent.action] || (() => intent.action))(p)));
+  m.append(el("p", "note", "यह काम सारथी का Android ऐप करता है · this one runs in the Saarthi Android app."));
+  if (intent.action === "send_message" && p.channel !== "sms" && p.message) {
+    const row = el("div", "actions");
+    row.append(link("btn", "Open WhatsApp ↗", "https://wa.me/?text=" + encodeURIComponent(p.message)));
+    m.append(row);
+  }
+  speak("यह काम सारथी का फ़ोन ऐप करेगा।");
+}
+
+// /web/run is a POST that streams Server-Sent Events, so read it with fetch (EventSource is GET-only).
+async function* sseEvents(resp) {
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let end;
+    while ((end = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, end);
+      buf = buf.slice(end + 2);
+      const data = block.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+      if (data) yield JSON.parse(data); // lines starting with ":" are heartbeats
+    }
+  }
+}
+
+async function runWeb(intent) {
+  const { flow, ...params } = intent.params;
+  const search = flow === "web_search";
+  const card = runCard(flow, search);
+  const ctrl = new AbortController();
+  s.run = ctrl;
+  s.runCard = card;
+  refresh();
+  speak(search ? "वेब पर देख रहा हूं।" : "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।");
+  try {
+    const resp = await fetch("/web/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flow, params }),
+      signal: ctrl.signal,
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+    for await (const ev of sseEvents(resp)) {
+      if (s.run !== ctrl) return;
+      if (ev.type === "progress") card.step(ev.message);
+      else if (ev.type === "watch") card.watch(ev.url);
+      else if (ev.type === "result" || ev.type === "error") {
+        s.run = s.runCard = null;
+        if (ev.type === "result") card.result(ev, search); else card.fail(ev.speak, ev.message);
+        speak(ev.speak);
+        refresh();
+        return;
+      }
+    }
+    throw new Error("the stream ended without a result");
+  } catch (e) {
+    if (s.run !== ctrl) return; // the user pressed stop
+    s.run = s.runCard = null;
+    const text = "वेब एजेंट से कनेक्शन टूट गया।";
+    card.fail(text, String(e.message || e));
+    speak(text);
+    refresh();
+  }
+}
+
+function runCard(flow, search) {
+  const m = agentMsg("");
+  m.classList.add("card");
+  const label = el("div", "label");
+  label.append(el("span", null, flowTitles[flow] || flow), el("span", "tag", search ? "TinyFish Search + Fetch" : "TinyFish Agent"));
+  const steps = el("ul", "steps");
+  m.append(label, steps);
+  let current = null, watchLink = null;
+  const settle = (cls) => {
+    if (current) { current.classList.remove("now"); if (cls) current.classList.add(cls); }
+    current = null;
+    watchLink?.remove(); // the live view ends with the run
+  };
+  const tuckSteps = () => {
+    if (!steps.children.length) return;
+    const trail = el("details", "trail");
+    trail.append(el("summary", null, `${steps.children.length} steps`), steps);
+    label.after(trail);
+  };
+  const api = {
+    step(text) { settle(); current = el("li", "now", text); steps.append(current); scrollDown(); },
+    watch(url) {
+      const u = safeUrl(url);
+      if (!u) return;
+      watchLink = m.appendChild(link("watch", "Watch the live browser ↗", u));
+      liveFrame.src = u;
+      liveLink.href = u;
+      bodyEl.classList.add("has-browser");
+    },
+    result(ev, isSearch) {
+      settle();
+      tuckSteps();
+      hideLive();
+      m.append(el("p", "answer", ev.speak));
+      const data = ev.data || {};
+      if (isSearch) {
+        const ul = el("ul", "sources");
+        for (const src of data.sources || []) {
+          const u = safeUrl(src.url);
+          if (!u) continue;
+          const a = link(null, src.title || u, u);
+          a.prepend(el("small", null, src.site || new URL(u).hostname));
+          const li = el("li");
+          li.append(a);
+          ul.append(li);
+        }
+        if (ul.children.length) m.append(ul);
+      } else {
+        const dl = el("dl", "facts");
+        for (const [key, name] of [["status", "Status"], ["details", "Details"], ["needs_user_input", "Needs"]]) {
+          if (data[key]) dl.append(el("dt", null, name), el("dd", null, String(data[key])));
+        }
+        if (dl.children.length) m.append(dl);
+      }
+      scrollDown();
+    },
+    fail(text, tech) {
+      settle("off");
+      hideLive();
+      m.classList.add("error");
+      m.append(el("p", "answer", text));
+      if (tech) m.append(el("span", "tech", tech));
+      scrollDown();
+    },
+    stopped() { settle("off"); hideLive(); m.append(el("p", "note", "रोक दिया · stopped")); },
+  };
+  api.step(search ? "Starting TinyFish Search" : "Starting the TinyFish browser");
+  return api;
+}
+function hideLive() { bodyEl.classList.remove("has-browser"); liveFrame.removeAttribute("src"); }
+
+// Kill switch: the stop button, Esc, or saying "ruko". Aborting the stream makes the backend
+// cancel the TinyFish run too.
+function stop() {
+  s.gen++;
+  const run = s.run, card = s.runCard;
+  s.run = s.runCard = null;
+  if (run) { run.abort(); card.stopped(); }
+  s.pending = null;
+  s.clarify = null;
+  s.thinking = false;
+  list.querySelectorAll(".typing").forEach((n) => n.remove());
+  closeConfirm(-1);
+  stopListening();
+  shush();
+  refresh();
+}
+
+// ---------- Wiring ----------
+
+micBtn.addEventListener("click", () => {
+  if (s.rec) { s.rec.stop(); return; } // finished talking: use what was heard
+  if (s.run || s.thinking) { stop(); say("ठीक है, रुक गया।"); return; }
+  listen();
+});
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = input.value;
+  input.value = "";
+  stopListening();
+  shush();
+  heard(text, false);
+});
+input.addEventListener("input", refresh);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") stop(); });
+for (const chip of document.querySelectorAll(".chip")) {
+  chip.addEventListener("click", () => heard(chip.textContent, false));
+}
+
+function showLang() {
+  langBtn.textContent = lang === "hi-IN" ? "हिं" : "EN";
+  langBtn.title = lang === "hi-IN" ? "Listening in Hindi (tap for English)" : "Listening in English (tap for Hindi)";
+  langBtn.setAttribute("aria-label", langBtn.title);
+}
+langBtn.addEventListener("click", () => {
+  lang = lang === "hi-IN" ? "en-IN" : "hi-IN";
+  store.set("saarthi.lang", lang);
+  showLang();
+});
+
+function setStatus(cls, text, title) {
+  statusEl.className = "pill " + cls;
+  statusEl.textContent = text;
+  statusEl.title = title;
+}
+async function boot() {
+  showLang();
+  refresh();
+  try {
+    for (const f of await (await fetch("/flows")).json()) flowTitles[f.id] = f.title;
+    const h = await (await fetch("/health")).json();
+    const mocked = h.mock_flows || [];
+    if (h.mock_search) setStatus("mock", "Mock mode", "No TinyFish API key: answers are canned");
+    else if (mocked.length) setStatus("live", "TinyFish live", "Search and Fetch are live; some portal runs are simulated");
+    else setStatus("live", "TinyFish live", "Search, Fetch and portal runs are all live");
+    const note = $("#mock-note");
+    note.hidden = !mocked.length;
+    note.textContent = h.mock_tinyfish
+      ? "Demo mode: portal runs are simulated, so nothing is charged."
+      : `Simulated, no charge: ${mocked.map((f) => flowTitles[f] || f).join(", ")}. The rest run live on the real site.`;
+  } catch {
+    setStatus("down", "Offline", "Can't reach the Saarthi backend");
+  }
+  const q = new URLSearchParams(location.search).get("q"); // deep link: /?q=PM+Kisan+yojana+kya+hai
+  if (q) heard(q, false);
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+package com.dietcode.diplo.ui
+
+import android.content.Context
+import android.speech.SpeechRecognizer
+import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.dietcode.diplo.exec.PhoneExecutor
+import com.dietcode.diplo.intent.AgentIntent
+import com.dietcode.diplo.intent.OfflineParser
+import com.dietcode.diplo.net.BackendClient
+import com.dietcode.diplo.net.WebEvent
+import com.dietcode.diplo.voice.Speaker
+import com.dietcode.diplo.voice.SpeechInput
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import okhttp3.sse.EventSource
+import java.io.IOException
+
+sealed interface UiState {
+    data object Idle : UiState
+    data object Listening : UiState
+    data class Thinking(val heard: String) : UiState
+    data class Confirm(val question: String) : UiState
+    data class Working(val steps: List<String> = emptyList(), val watchUrl: String? = null) : UiState
+    data class Done(val text: String, val failed: Boolean = false) : UiState
+}
+
+/**
+ * The listen -> understand -> confirm -> act -> reply loop. Lives on the main thread.
+ * Phone commands are parsed on device first; everything else goes to the backend.
+ */
+class AgentController(context: Context, private val scope: CoroutineScope) {
+
+    var state by mutableStateOf<UiState>(UiState.Idle)
+        private set
+
+    // For the screen's animations: mic loudness (0..1), what Diplo is saying and which word of
+    // it, and the user's last words shown above the reply.
+    var level by mutableFloatStateOf(0f)
+        private set
+    var spokenText by mutableStateOf<String?>(null)
+        private set
+    var spokenWord by mutableStateOf<IntRange?>(null)
+        private set
+    var heard by mutableStateOf("")
+        private set
+
+    private val speaker = Speaker(
+        context,
+        onSpeaking = { text ->
+            spokenText = text
+            spokenWord = null
+        },
+        onWord = { spokenWord = it },
+    )
+    private val executor = PhoneExecutor(context)
+    private val backend = BackendClient()
+    private val speech = SpeechInput(context, onText = ::onHeard, onFailure = ::onSpeechError, onLevel = { level = it })
+
+    private var pending: AgentIntent? = null // waiting for "haan" / "nahi"
+    private var clarifyContext: String? = null // earlier words when we asked a follow-up
+    private var webRun: EventSource? = null
+
+    // The last few (heard, said) pairs, so the backend can tell what "यह मैसेज" or "कौन जीता" means.
+    private val history = ArrayDeque<Pair<String, String>>()
+    private var turnText: String? = null // the command the current turn is answering
+
+    fun startListening() {
+        speaker.stop()
+        // A second tap while listening stops: two live recognizers fail with ERROR_CLIENT, and the
+        // first one then hears Diplo reading out that error.
+        if (state == UiState.Listening) {
+            speech.cancel()
+            state = UiState.Idle
+            return
+        }
+        state = UiState.Listening
+        speech.listen()
+    }
+
+    /** Kill switch: the Stop button or saying "ruko". */
+    fun stop() {
+        webRun?.cancel()
+        webRun = null
+        pending = null
+        clarifyContext = null
+        turnText = null
+        speech.cancel()
+        speaker.stop()
+        state = UiState.Idle
+    }
+
+    /** Typed instead of spoken: for noisy rooms, or when speech recognition isn't available. */
+    fun submitText(text: String) {
+        if (text.isBlank()) return
+        speech.cancel()
+        speaker.stop()
+        onHeard(text.trim())
+    }
+
+    /** On-screen Haan / Nahi buttons. */
+    fun answer(yes: Boolean) {
+        val intent = pending ?: return
+        pending = null
+        speech.cancel()
+        if (yes) execute(intent) else finish("ठीक है, नहीं किया।")
+    }
+
+    fun destroy() {
+        stop()
+        speech.destroy()
+        speaker.shutdown()
+    }
+
+    private fun onHeard(text: String) {
+        if (OfflineParser.isStop(text)) {
+            stop()
+            speaker.say("ठीक है, रुक गया।")
+            return
+        }
+        pending?.let { intent ->
+            when (OfflineParser.confirmation(text)) {
+                true -> answer(yes = true)
+                false -> answer(yes = false)
+                null -> ask(intent.speak)
+            }
+            return
+        }
+
+        val fullText = clarifyContext?.takeIf { answersQuestion(text) }?.let { "$it $text" } ?: text
+        clarifyContext = null
+        turnText = fullText
+        heard = text
+        state = UiState.Thinking(text)
+        scope.launch {
+            val intent = OfflineParser.parse(fullText) ?: try {
+                backend.parseIntent(fullText, history.toList())
+            } catch (e: IOException) {
+                Log.w(TAG, "heard \"$fullText\": not parsed on device, backend unreachable: $e")
+                finish("सर्वर से नहीं जुड़ पाया। कॉल, मैसेज और अलार्म इसके बिना भी चलते हैं।", failed = true)
+                return@launch
+            }
+            Log.i(TAG, "heard \"$fullText\" -> ${intent.kind} ${intent.action} ${intent.params}")
+            handle(fullText, intent)
+        }
+    }
+
+    // We asked for an ID, a PNR or a name. A long answer without digits is a new command
+    // ("हमसफर ट्रेन का स्टेटस बताओ"), and gluing it on would keep asking the old question.
+    private fun answersQuestion(text: String) =
+        text.any(Char::isDigit) || text.trim().split(Regex("""\s+""")).size <= 4
+
+    private fun handle(heard: String, intent: AgentIntent) {
+        when {
+            intent.kind == AgentIntent.Kind.CLARIFY -> {
+                clarifyContext = heard
+                remember(intent.speak) // the answer may come as a new sentence: "उसको इंट्रो लिखकर भेज दो"
+                state = UiState.Thinking(heard)
+                speaker.say(intent.speak) { startListening() }
+            }
+            intent.kind == AgentIntent.Kind.UNKNOWN -> finish(intent.speak, failed = true)
+            intent.kind == AgentIntent.Kind.CHAT -> finish(intent.speak) // small talk: the reply is the answer
+            // Find the contact before asking, so "haan" confirms the person actually saved on the phone.
+            intent.kind == AgentIntent.Kind.PHONE && "contact" in intent.params && "number" !in intent.params -> {
+                val spoken = intent.params.getValue("contact")
+                val contact = executor.findContact(spoken)
+                Log.i(TAG, "contact \"$spoken\" -> ${contact?.name}")
+                contact ?: return finish("${spoken.replaceFirstChar(Char::titlecase)} नाम का कोई कॉन्टैक्ट नहीं मिला।", failed = true)
+                handle(
+                    heard,
+                    intent.copy(
+                        params = intent.params + mapOf("contact" to contact.name, "number" to contact.number),
+                        speak = intent.speak.replaceFirst(spoken, contact.name, ignoreCase = true),
+                    ),
+                )
+            }
+            // The backend's policy also asks, but the phone never trusts a reply to skip it.
+            intent.needsConfirmation || intent.action in ALWAYS_ASK -> {
+                pending = intent
+                ask(intent.speak)
+            }
+            else -> execute(intent)
+        }
+    }
+
+    private fun ask(question: String) {
+        Log.i(TAG, "asked: $question")
+        state = UiState.Confirm(question)
+        speaker.say(question) { if (pending != null) speech.listen() }
+    }
+
+    private fun execute(intent: AgentIntent) {
+        if (intent.kind == AgentIntent.Kind.WEB) runWeb(intent) else finish(executor.execute(intent))
+    }
+
+    private fun runWeb(intent: AgentIntent) {
+        val flow = intent.params["flow"] ?: return finish("यह काम समझ नहीं आया।", failed = true)
+        state = UiState.Working()
+        // web_search is a quick read of public pages; portal flows drive a real browser.
+        speaker.say(if (flow == "web_search") "वेब पर देख रहा हूं।" else "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।")
+        var source: EventSource? = null
+        source = backend.runWebTask(flow, intent.params - "flow") { event ->
+            // Hop to the main thread and drop events from a run the user already stopped.
+            scope.launch { if (webRun === source) onWebEvent(event) }
+        }
+        webRun = source
+    }
+
+    private fun onWebEvent(event: WebEvent) {
+        val working = state as? UiState.Working
+        when (event) {
+            is WebEvent.Progress -> if (working != null) state = working.copy(steps = working.steps + event.message)
+            is WebEvent.Watch -> if (working != null) state = working.copy(watchUrl = event.url)
+            is WebEvent.Result -> {
+                webRun = null
+                finish(event.speak)
+            }
+            is WebEvent.Error -> {
+                webRun = null
+                finish(event.speak, failed = true)
+            }
+        }
+    }
+
+    private fun onSpeechError(code: Int) {
+        // Only errors from a live listen matter: cancel() (Stop, or typing instead) also reports one.
+        if (state != UiState.Listening && pending == null) return
+        pending?.let {
+            state = UiState.Confirm(it.speak) // whatever went wrong, keep the Haan / Nahi buttons up
+            return
+        }
+        // Restarting the recognizer, not the user, causes these.
+        if (code == SpeechRecognizer.ERROR_CLIENT || code == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+            state = UiState.Idle
+            return
+        }
+        finish(
+            when (code) {
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+                    "कुछ सुनाई नहीं दिया। माइक दबाकर फिर बोलिए।"
+                SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
+                    "इस फ़ोन पर हिंदी में सुनना चालू नहीं है। Google ऐप में हिंदी स्पीच पैक डाउनलोड करें, या नीचे लिखिए।"
+                else -> "माइक में दिक्कत है ($code)। नीचे लिखकर भी बता सकते हैं।"
+            },
+            failed = true,
+        )
+    }
+
+    private fun finish(text: String, failed: Boolean = false) {
+        Log.i(TAG, "said: $text")
+        speech.cancel() // never listen while speaking: the mic would hear Diplo
+        // A follow-up question that ended (e.g. nothing heard) must not glue onto the next command.
+        clarifyContext = null
+        if (failed) turnText = null else remember(text)
+        state = UiState.Done(text, failed)
+        speaker.say(text)
+    }
+
+    private fun remember(said: String) {
+        val heard = turnText ?: return
+        turnText = null
+        history.addLast(heard to said)
+        while (history.size > MAX_HISTORY) history.removeFirst()
+    }
+
+    private companion object {
+        const val TAG = "Diplo"
+        const val MAX_HISTORY = 3
+        val ALWAYS_ASK = setOf("call", "send_message", "save_contact", "delete_contact")
+    }
+}
