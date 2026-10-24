@@ -83,17 +83,50 @@ def _web_intent(flow_id: str, params: dict[str, str]) -> Intent:
     )
 
 
+# Booking and ordering apps by how the recognizer writes them. When the user names one, the goal
+# must use it: for "रैपीडो से …" the model once wrote "Open Google Maps … from Rapid".
+# Latin names match whole words only ("ola" must not match "bola").
+_NAMED_APPS = {
+    "Uber": ("uber", "उबर"),
+    "Ola": ("ola", "ओला"),
+    "Rapido": ("rapido", "रैपीडो", "रैपिडो", "रापिडो"),
+    "inDrive": ("indrive", "इनड्राइव"),
+    "Swiggy": ("swiggy", "स्विगी"),
+    "Zomato": ("zomato", "ज़ोमैटो", "जोमैटो"),
+}
+
+
+# Money moving: the agent stops on the payment screen (phone.LIMITS), and the question says so.
+_PAYMENT = re.compile(
+    r"\b(pay|payment|send money|transfer|upi|paytm|phonepe|gpay|google pay|bhim)\b"
+    r"|₹|पैसे|भुगतान|पेमेंट|रुपये|पेटीएम|फ़ोनपे|फोनपे"
+)
+
+
+def _named_app(said: str) -> str | None:
+    lowered = said.lower()
+    for app, names in _NAMED_APPS.items():
+        for name in names:
+            if re.search(rf"\b{name}\b", lowered) if name.isascii() else name in said:
+                return app
+    return None
+
+
 def phone_task_intent(goal: str, said: str) -> Intent:
     """An ARTEMIS run on the phone. It goes through /web/run like the portal flows, so the app
     confirms it and shows its steps the same way. The question repeats the user's own words."""
     said = said.strip().rstrip("।.!? ")
+    app = _named_app(said)
+    if app and app.lower() not in goal.lower():
+        goal = f"Use the {app} app, not Google Maps or any other app. {goal}"
     # The user's own words go along, so the agent can check the goal against them: the model once
     # wrote "Lower the screen brightness" for "ब्राइटनेस ज्यादा करो" (turn it up).
+    payment = _PAYMENT.search(said.lower()) or _PAYMENT.search(goal.lower())
     return Intent(
         kind="web",
         action="web_task",
         params={"flow": phone.FLOW_ID, "goal": f'{goal.strip()} (The user said: "{said}")'},
-        speak=f"फ़ोन पर यह करूं: {said}?",
+        speak=f"फ़ोन पर यह करूं: {said}?" + (" पेमेंट का आखिरी बटन आप खुद दबाइएगा।" if payment else ""),
     )
 
 
@@ -192,7 +225,11 @@ _AGENT_PHONE_PROMPT = """- read_screen: {} reads the screen aloud
   done on the phone, in any app: calls ("Open the Phone app and call Mummy"), WhatsApp or SMS
   messages with the exact text ("Open WhatsApp, open the chat with Rahul and send: मैं 7 बजे
   आऊंगा"), alarms, settings, opening apps and playing songs, contacts, bookings and orders ("Open
-  Uber and book an Uber Go from my current location to Connaught Place"). If the user asks you
+  Uber and book an Uber Go from my current location to Connaught Place"). Rides are booked in the
+  cab app the user names: उबर = Uber, ओला = Ola, रैपीडो/रैपिडो = Rapido, इनड्राइव = inDrive ("रैपीडो
+  से ABES कॉलेज के लिए बाइक बुक करो" -> "Open Rapido and book a bike from my current location to
+  ABES Engineering College"; "से" there means "with", not a place). Never book with Google Maps,
+  which is only for directions; if no cab app is named, ask which one with kind "clarify". If the user asks you
   to write the message, write it yourself into the goal. Keep the direction the user asked for:
   "ब्राइटनेस ज्यादा करो" / "brightness badhao" -> "Raise the screen brightness", "brightness kam
   karo" -> "Lower the screen brightness". Vague complaints mean the fix: "aankhon mein chubh raha

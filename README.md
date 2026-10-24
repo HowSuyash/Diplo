@@ -113,8 +113,10 @@ on the laptop: calls, WhatsApp messages, settings, ride bookings, food orders, a
 ("uber se connaught place ki ride book karo", "Instagram pe meri last post ke likes batao"). The
 backend's LLM writes an English goal and, after "haan", ARTEMIS taps through the phone's apps like
 a person. The app shows each step, "ruko" stops it, and at the end Diplo reads the screen it left
-and says the result ("Uber Go बुक हो गई, ड्राइवर 4 मिनट में"). It never types a UPI PIN, password or
-OTP: it stops on that screen for you. `ARTEMIS_FOR_ALL=0` keeps the app's instant commands (call,
+and says the result ("Uber Go बुक हो गई, ड्राइवर 4 मिनट में"). It never pays: it stops on the screen
+with the final Pay or Send money button (UPI Lite needs no PIN, so a PIN rule alone isn't enough),
+and it never types a UPI PIN, password or OTP. Rides go in the cab app you name ("रैपीडो से…"), never
+Google Maps. `ARTEMIS_FOR_ALL=0` keeps the app's instant commands (call,
 alarm, settings…) and uses ARTEMIS only for the rest. Offline, the app's own rules and on-device
 model still handle the phone commands.
 
@@ -124,6 +126,7 @@ cd artemis
 pip install uv && uv sync                            # once
 copy .env.example .env                               # then set GEMINI_API_KEY (aistudio.google.com)
 set PATH=%LOCALAPPDATA%\Android\Sdk\platform-tools;%PATH%
+set ARTEMIS_CANCEL_GRACE_SECONDS=2                   # "ruko" stops the phone at once, not after 45 s
 uv run artemis-admin --port 8765                     # our backend already uses 8000
 ```
 

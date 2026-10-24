@@ -291,6 +291,28 @@ def test_other_phone_tasks_go_to_artemis_after_haan(monkeypatch):
     }
 
 
+def test_rides_use_the_cab_app_the_user_named(monkeypatch):
+    # For "रैपीडो से …" gpt-oss wrote a Google Maps goal and read "से" as a place ("from Rapid").
+    _phone_agent_on(monkeypatch, mock=True)
+    maps_goal = "Open Google Maps, set destination to Abes Engineering College from Rapid"
+    _model_says(monkeypatch, {"kind": "phone", "action": "phone_task", "params": {"goal": maps_goal}}, offered=True)
+    goal = client.post("/intent", json={"text": "रैपीडो से एब्स इंजीनियरिंग कॉलेज के लिए बाइक बुक करो"}).json()["params"]["goal"]
+    assert goal.startswith("Use the Rapido app, not Google Maps")
+    # "ola" inside "bola" is not Ola, and a goal that already names the app is left alone.
+    assert main.intent._named_app("mummy ko bola main aa raha hoon") is None
+    assert main.intent._named_app("uber se cp jana hai") == "Uber"
+    assert main.intent.phone_task_intent("Open Uber and book a ride", "uber book karo").params["goal"].startswith("Open Uber")
+
+
+def test_payments_stop_on_the_payment_screen():
+    # UPI Lite pays small amounts without a PIN, so the agent must never tap the final Pay itself.
+    assert "Never complete a payment" in main.phone.LIMITS
+    pay = main.intent.phone_task_intent("Open Paytm and send ₹2 to Suyash", "पेटीएम से सुयश को ₹2 भेजो")
+    assert pay.speak.endswith("पेमेंट का आखिरी बटन आप खुद दबाइएगा।")
+    ride = main.intent.phone_task_intent("Open Uber and book a ride to Connaught Place", "uber book karo")
+    assert "पेमेंट" not in ride.speak
+
+
 def test_phone_task_without_a_goal_gets_the_users_words(monkeypatch):
     # gpt-oss answered "brightness kam karo" with phone_task and empty params.
     _phone_agent_on(monkeypatch, mock=True)

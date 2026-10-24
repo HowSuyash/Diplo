@@ -24,10 +24,13 @@ TITLE = "Do anything on the phone (Google ARTEMIS)"
 REQUIRED = ("goal",)
 
 # Added to every goal, so the agent does what the user said haan to and nothing riskier. Booking a
-# ride or placing an order the user asked for is fine; typing a PIN, password or OTP stays theirs.
+# ride the user asked for is fine. Paying never is: UPI Lite sends small amounts without a PIN, so
+# "don't type the PIN" alone would let "पेटीएम से सुयश को ₹2 भेजो" move real money.
 LIMITS = (
-    " Do only what this task asks, and finish it. Never type a UPI PIN, password, OTP or card details,"
-    " and never change security or account settings: stop on that screen so the user can do it."
+    " Do only what this task asks, and finish it. Never complete a payment: do not tap the final"
+    " Pay, Send money or Proceed to pay button; stop on that screen so the user pays themselves."
+    " Never type a UPI PIN, password, OTP or card details, and never change security or account"
+    " settings: stop on that screen so the user can do it."
     " Do not send, post, buy, book or delete anything the task does not ask for."
 )
 
@@ -57,7 +60,8 @@ _ANSWER_PROMPT = """A phone agent just did a task on the user's phone. You get t
 the text now on the phone's screen, top to bottom. Tell the user the result in one or two short
 sentences, as Diplo talking out loud: what the screen shows about the task (a fare and arrival
 time, a count, a status, that the message was sent). Use only the screen text and never invent
-numbers or names. If the screen doesn't show the result, say only that it is done. Reply in Hindi
+numbers or names. If the screen is waiting for a payment, PIN or OTP, say that the user should
+finish that step themselves. If the screen doesn't show the result, say only that it is done. Reply in Hindi
 written in Devanagari if the user spoke Hindi or Hinglish, otherwise in English. No markdown."""
 
 
