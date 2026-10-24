@@ -1,14 +1,19 @@
 package com.dietcode.diplo.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.dietcode.diplo.MainActivity
+import com.dietcode.diplo.exec.DiploAccessibilityService
 import com.dietcode.diplo.exec.PhoneExecutor
 import com.dietcode.diplo.intent.AgentIntent
+import com.dietcode.diplo.intent.LocalBrain
 import com.dietcode.diplo.intent.OfflineParser
 import com.dietcode.diplo.net.BackendClient
 import com.dietcode.diplo.net.WebEvent
@@ -56,13 +61,20 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         },
         onWord = { spokenWord = it },
     )
+    private val appContext = context.applicationContext
     private val executor = PhoneExecutor(context)
     private val backend = BackendClient()
+
+    init {
+        // Fetch the on-device model now, while there is a network, so it is there offline.
+        scope.launch { LocalBrain.prepare(appContext) }
+    }
     private val speech = SpeechInput(context, onText = ::onHeard, onFailure = ::onSpeechError, onLevel = { level = it })
 
     private var pending: AgentIntent? = null // waiting for "haan" / "nahi"
     private var clarifyContext: String? = null // earlier words when we asked a follow-up
     private var webRun: EventSource? = null
+    private var runIntent: AgentIntent? = null // what the running web or phone task is doing
 
     // The last few (heard, said) pairs, so the backend can tell what "यह मैसेज" or "कौन जीता" means.
     private val history = ArrayDeque<Pair<String, String>>()
@@ -85,6 +97,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     fun stop() {
         webRun?.cancel()
         webRun = null
+        runIntent = null
         pending = null
         clarifyContext = null
         turnText = null
@@ -136,12 +149,16 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         heard = text
         state = UiState.Thinking(text)
         scope.launch {
-            val intent = OfflineParser.parse(fullText) ?: try {
+            // Online, the backend's model decides, and with Google ARTEMIS on it does any phone task
+            // itself. Offline, the phone's rules, then the on-device model for what they miss.
+            val intent = try {
                 backend.parseIntent(fullText, history.toList())
             } catch (e: IOException) {
-                Log.w(TAG, "heard \"$fullText\": not parsed on device, backend unreachable: $e")
-                finish("सर्वर से नहीं जुड़ पाया। कॉल, मैसेज और अलार्म इसके बिना भी चलते हैं।", failed = true)
-                return@launch
+                Log.w(TAG, "heard \"$fullText\": backend unreachable, understanding it on the phone: $e")
+                OfflineParser.parse(fullText) ?: LocalBrain.parse(appContext, fullText) ?: run {
+                    finish("सर्वर से नहीं जुड़ पाया। कॉल, मैसेज और अलार्म इसके बिना भी चलते हैं।", failed = true)
+                    return@launch
+                }
             }
             Log.i(TAG, "heard \"$fullText\" -> ${intent.kind} ${intent.action} ${intent.params}")
             handle(fullText, intent)
@@ -199,8 +216,16 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private fun runWeb(intent: AgentIntent) {
         val flow = intent.params["flow"] ?: return finish("यह काम समझ नहीं आया।", failed = true)
         state = UiState.Working()
-        // web_search is a quick read of public pages; portal flows drive a real browser.
-        speaker.say(if (flow == "web_search") "वेब पर देख रहा हूं।" else "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।")
+        // web_search is a quick read of public pages; portal flows drive a real browser, and
+        // phone_task has Google ARTEMIS tap through this phone's apps.
+        speaker.say(
+            when (flow) {
+                "web_search" -> "वेब पर देख रहा हूं।"
+                "phone_task" -> "फ़ोन पर कर रहा हूं, थोड़ा समय लगेगा।"
+                else -> "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।"
+            },
+        )
+        runIntent = intent
         var source: EventSource? = null
         source = backend.runWebTask(flow, intent.params - "flow") { event ->
             // Hop to the main thread and drop events from a run the user already stopped.
@@ -216,12 +241,45 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             is WebEvent.Watch -> if (working != null) state = working.copy(watchUrl = event.url)
             is WebEvent.Result -> {
                 webRun = null
-                finish(event.speak)
+                val run = runIntent
+                runIntent = null
+                if (run?.params?.get("flow") == "phone_task") sayPhoneResult(run, event.speak) else finish(event.speak)
             }
             is WebEvent.Error -> {
                 webRun = null
+                if (runIntent?.params?.get("flow") == "phone_task") comeBack()
+                runIntent = null
                 finish(event.speak, failed = true)
             }
+        }
+    }
+
+    // ARTEMIS only reports that it finished; the screen it left shows what happened (a fare, a
+    // count, a sent message), so read it and let the backend's model say the result.
+    private fun sayPhoneResult(run: AgentIntent, fallback: String) {
+        val screen = DiploAccessibilityService.instance?.readScreen(maxItems = 80).orEmpty()
+        comeBack() // after reading: the screen to read is the app ARTEMIS left open
+        scope.launch {
+            val result = try {
+                backend.answerFromScreen(run.params["goal"].orEmpty(), heard, screen)
+            } catch (e: IOException) {
+                fallback
+            }
+            if (state is UiState.Working) finish(result) // not if the user said "ruko" meanwhile
+        }
+    }
+
+    // ARTEMIS works in other apps, so Diplo is behind them by the end, which looks like it closed.
+    // Its bound accessibility service lets it come back to the front from the background.
+    private fun comeBack() {
+        val front = Intent(appContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        try {
+            appContext.startActivity(front)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "could not come back to the front: $e")
+        } catch (e: SecurityException) {
+            Log.w(TAG, "could not come back to the front: $e")
         }
     }
 

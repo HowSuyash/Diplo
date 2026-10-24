@@ -56,6 +56,18 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
             }
         }
 
+    /** After a phone_task: what to say, read from the [screen] text the agent left (POST /phone/answer). */
+    suspend fun answerFromScreen(goal: String, said: String, screen: List<String>): String =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("goal", goal).put("said", said).put("screen", JSONArray(screen))
+                .toString().toRequestBody(json)
+            val request = Request.Builder().url("$baseUrl/phone/answer").post(body).build()
+            http.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+                JSONObject(resp.body?.string().orEmpty()).getString("speak")
+            }
+        }
+
     /** Streams a web flow. [onUpdate] runs on an OkHttp thread; cancel the returned source to stop. */
     fun runWebTask(flow: String, params: Map<String, String>, onUpdate: (WebEvent) -> Unit): EventSource {
         val body = JSONObject().put("flow", flow).put("params", JSONObject(params)).toString().toRequestBody(json)

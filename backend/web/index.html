@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111118" media="(prefers-color-scheme: dark)">
-<meta name="description" content="Speak a goal in Hindi, Hinglish or English. Saarthi gets it done on the web with TinyFish.">
+<meta name="description" content="Speak a goal in Hindi, Hinglish or English. Diplo gets it done on the web with TinyFish.">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
-<title>Saarthi</title>
+<title>Diplo</title>
 <!--
-  Saarthi web client: the same listen -> understand -> confirm -> act -> reply loop as the
+  Diplo web client: the same listen -> understand -> confirm -> act -> reply loop as the
   Android app (AgentController.kt), in a phone or laptop browser. It talks to this backend's
   /intent and /web/run (docs/API_CONTRACT.md). Voice uses the browser's speech APIs, which need
   https or localhost; typing always works.
@@ -208,8 +208,8 @@ button { font: inherit; }
     <div class="brand">
       <img src="icon.svg" alt="">
       <div>
-        <h1>Saarthi</h1>
-        <p>सारथी · voice agent</p>
+        <h1>Diplo</h1>
+        <p>डिप्लो · voice agent</p>
       </div>
     </div>
     <div class="top-actions">
@@ -222,8 +222,8 @@ button { font: inherit; }
     <main id="feed" class="feed">
       <div id="list" class="list" aria-live="polite">
         <section id="welcome" class="welcome">
-          <h2>बोलिए, सारथी कर देगा।</h2>
-          <p>Speak or type in Hindi, Hinglish or English. Saarthi answers from the live web and runs
+          <h2>बोलिए, डिप्लो कर देगा।</h2>
+          <p>Speak or type in Hindi, Hinglish or English. Diplo answers from the live web and runs
             portal tasks with TinyFish, and asks you before it does anything on a portal.</p>
           <div class="group">
             <h3>Ask the web · TinyFish Search + Fetch</h3>
@@ -309,7 +309,7 @@ const s = {
   thinking: false,
   voice: false,     // the user spoke (not typed) last turn, so listen again after asking
 };
-let lang = store.get("saarthi.lang") === "en-IN" ? "en-IN" : "hi-IN";
+let lang = store.get("diplo.lang") === "en-IN" ? "en-IN" : "hi-IN";
 const flowTitles = {};
 
 // ---------- DOM helpers ----------
@@ -567,13 +567,13 @@ function phoneCard(intent) {
   const label = el("div", "label");
   label.append(el("span", null, "Phone command"), el("span", "tag", "Android app"));
   m.append(label, el("p", "answer", (PHONE[intent.action] || (() => intent.action))(p)));
-  m.append(el("p", "note", "यह काम सारथी का Android ऐप करता है · this one runs in the Saarthi Android app."));
+  m.append(el("p", "note", "यह काम डिप्लो का Android ऐप करता है · this one runs in the Diplo Android app."));
   if (intent.action === "send_message" && p.channel !== "sms" && p.message) {
     const row = el("div", "actions");
     row.append(link("btn", "Open WhatsApp ↗", "https://wa.me/?text=" + encodeURIComponent(p.message)));
     m.append(row);
   }
-  speak("यह काम सारथी का फ़ोन ऐप करेगा।");
+  speak("यह काम डिप्लो का फ़ोन ऐप करेगा।");
 }
 
 // /web/run is a POST that streams Server-Sent Events, so read it with fetch (EventSource is GET-only).
@@ -603,7 +603,10 @@ async function runWeb(intent) {
   s.run = ctrl;
   s.runCard = card;
   refresh();
-  speak(search ? "वेब पर देख रहा हूं।" : "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।");
+  // phone_task: Google ARTEMIS taps through the phone connected to the laptop.
+  speak(search ? "वेब पर देख रहा हूं।"
+    : flow === "phone_task" ? "फ़ोन पर कर रहा हूं, थोड़ा समय लगेगा।"
+    : "पोर्टल खोल रहा हूं, थोड़ा समय लगेगा।");
   try {
     const resp = await fetch("/web/run", {
       method: "POST",
@@ -751,7 +754,7 @@ function showLang() {
 }
 langBtn.addEventListener("click", () => {
   lang = lang === "hi-IN" ? "en-IN" : "hi-IN";
-  store.set("saarthi.lang", lang);
+  store.set("diplo.lang", lang);
   showLang();
 });
 
@@ -776,7 +779,7 @@ async function boot() {
       ? "Demo mode: portal runs are simulated, so nothing is charged."
       : `Simulated, no charge: ${mocked.map((f) => flowTitles[f] || f).join(", ")}. The rest run live on the real site.`;
   } catch {
-    setStatus("down", "Offline", "Can't reach the Saarthi backend");
+    setStatus("down", "Offline", "Can't reach the Diplo backend");
   }
   const q = new URLSearchParams(location.search).get("q"); // deep link: /?q=PM+Kisan+yojana+kya+hai
   if (q) heard(q, false);

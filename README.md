@@ -19,7 +19,7 @@ Team **DietCode** · HackIIITD 2026 (Esya '26, IIIT Delhi) · Suyash Shukla, Suy
 
 ```
 android/       Kotlin + Jetpack Compose app: voice I/O, offline parser, phone executor, accessibility service
-backend/       Python FastAPI: /intent (rules + LLM fallback), /web/run (TinyFish SSE), safety policy
+backend/       Python FastAPI: /intent (rules + LLM fallback), /web/run (TinyFish and ARTEMIS SSE), safety policy
 backend/web/   web client for phone and laptop browsers, served at /
 docs/          plan, API contract, pitch
 ```
@@ -103,17 +103,57 @@ work step by step, hear the answer. Phone commands (call, WhatsApp, alarm) stay 
 Tested on an Android 15 emulator: web answers, live PNR through TinyFish, alarm, call, and the
 WhatsApp confirmation. Voice input and the actual WhatsApp send need a real phone.
 
+The build needs Android SDK Platform 37 (RunAnywhere requires it); Studio offers to install it,
+or run `sdkmanager "platforms;android-37.0"`.
+
+## Phone agent: anything else on the phone (Google ARTEMIS)
+
+With ARTEMIS on, the phone's work is done by [Google ARTEMIS](https://github.com/google/artemis)
+on the laptop: calls, WhatsApp messages, settings, ride bookings, food orders, anything in any app
+("uber se connaught place ki ride book karo", "Instagram pe meri last post ke likes batao"). The
+backend's LLM writes an English goal and, after "haan", ARTEMIS taps through the phone's apps like
+a person. The app shows each step, "ruko" stops it, and at the end Diplo reads the screen it left
+and says the result ("Uber Go बुक हो गई, ड्राइवर 4 मिनट में"). It never types a UPI PIN, password or
+OTP: it stops on that screen for you. `ARTEMIS_FOR_ALL=0` keeps the app's instant commands (call,
+alarm, settings…) and uses ARTEMIS only for the rest. Offline, the app's own rules and on-device
+model still handle the phone commands.
+
+```bash
+git clone https://github.com/google/artemis.git      # next to this repo, once
+cd artemis
+pip install uv && uv sync                            # once
+copy .env.example .env                               # then set GEMINI_API_KEY (aistudio.google.com)
+set PATH=%LOCALAPPDATA%\Android\Sdk\platform-tools;%PATH%
+uv run artemis-admin --port 8765                     # our backend already uses 8000
+```
+
+Then put `ARTEMIS_URL=http://127.0.0.1:8765` in `backend/.env` and restart the backend. The phone
+is the one `adb devices` shows (USB or wireless debugging, as above). Its first task installs the
+small "Artemis Accessibility Helper" on it. ARTEMIS needs a Gemini key: its OpenAI-compatible
+mode (Groq) still has open bugs ([#95](https://github.com/google/artemis/issues/95)). Screenshots of
+the phone go to Gemini, so demo with a phone that has nothing private open. `MOCK_ARTEMIS=1` fakes
+the runs.
+
+## On-device LLM (RunAnywhere)
+
+Commands the rules don't catch still work with no network: `LocalBrain` runs a small model on the
+phone with [RunAnywhere](https://github.com/RunanywhereAI/runanywhere-sdks) (llama.cpp) and answers
+in the same Intent JSON, for phone actions and small talk. The model (`qwen3-0.6b` by default, a few
+hundred MB) downloads once while online; pick another catalog model with `diplo.localModel=` in
+`android/local.properties`. Online, the backend's bigger model answers first.
+
 ## How it works
 
 ```
 speak ─► SpeechRecognizer (hi-IN) ─► OfflineParser ──miss──► backend /intent (rules → LLM)
-                                         │                         │
+                                         │          offline? ─► LocalBrain (on-device LLM)
                                          ▼                         ▼
                               confirm by voice ("haan") ◄── needs_confirmation
                                          │
                      ┌───────────────────┴───────────────────┐
               PhoneExecutor                          backend /web/run ─► TinyFish Agent ─► portal
-       (call, WhatsApp, alarm, read screen)                │       └─► TinyFish Search + Fetch (questions)
+       (call, WhatsApp, alarm, settings,                   │       ├─► TinyFish Search + Fetch (questions)
+        apps, contacts, read screen)                       │       └─► Google ARTEMIS ─► any app on the phone
                                                            progress + result (SSE)
                      └───────────────────┬───────────────────┘
                                          ▼

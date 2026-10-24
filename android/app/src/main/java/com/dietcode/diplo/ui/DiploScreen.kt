@@ -1035,37 +1035,3 @@ private fun DiploPreviewContainer(
 private fun PreviewIdle() {
     DiploPreviewContainer(state = UiState.Idle)
 }
-
-
-@Composable
-fun SaarthiScreen(
-    state: UiState,
-    heard: String,
-    spokenText: String?,
-    spokenWord: IntRange?,
-    level: Float,
-    accessibilityOn: Boolean,
-    language: AppLanguage = AppLanguage.Hindi,
-    onLanguageChange: (AppLanguage) -> Unit = {},
-    onMic: () -> Unit,
-    onStop: () -> Unit,
-    onAnswer: (Boolean) -> Unit,
-    onSubmitText: (String) -> Unit,
-    onOpenUrl: (String) -> Unit,
-    onEnableAccessibility: () -> Unit,
-) = DiploScreen(
-    state = state,
-    heard = heard,
-    spokenText = spokenText,
-    spokenWord = spokenWord,
-    level = level,
-    accessibilityOn = accessibilityOn,
-    language = language,
-    onLanguageChange = onLanguageChange,
-    onMic = onMic,
-    onStop = onStop,
-    onAnswer = onAnswer,
-    onSubmitText = onSubmitText,
-    onOpenUrl = onOpenUrl,
-    onEnableAccessibility = onEnableAccessibility,
-)

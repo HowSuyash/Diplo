@@ -23,7 +23,7 @@ import com.dietcode.diplo.exec.DiploAccessibilityService
 import com.dietcode.diplo.ui.AgentController
 import com.dietcode.diplo.ui.AppLanguage
 import com.dietcode.diplo.ui.OnboardingScreen
-import com.dietcode.diplo.ui.SaarthiScreen
+import com.dietcode.diplo.ui.DiploScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
     private var phoneGranted by mutableStateOf(false)
     private var onboardingComplete by mutableStateOf(false)
     private var preferredLanguage by mutableStateOf(AppLanguage.Hindi)
-    private val prefs by lazy { getSharedPreferences("saarthi_prefs", Context.MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences("diplo_prefs", Context.MODE_PRIVATE) }
 
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 } else {
-                    SaarthiScreen(
+                    DiploScreen(
                         state = agent.state,
                         heard = agent.heard,
                         spokenText = agent.spokenText,

@@ -1,6 +1,6 @@
 {
-  "name": "Saarthi voice agent",
-  "short_name": "Saarthi",
+  "name": "Diplo voice agent",
+  "short_name": "Diplo",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f6f4ef",
