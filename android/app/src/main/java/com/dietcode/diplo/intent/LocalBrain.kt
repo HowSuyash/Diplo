@@ -5,6 +5,8 @@ import ai.runanywhere.proto.v1.ModelCategory
 import android.content.Context
 import android.util.Log
 import com.dietcode.diplo.BuildConfig
+import com.dietcode.diplo.exec.AgentStep
+import com.dietcode.diplo.exec.ScreenElement
 import com.runanywhere.sdk.foundation.errors.SDKException
 import com.runanywhere.sdk.llm.llamacpp.LlamaCPP
 import com.runanywhere.sdk.public.RunAnywhere
@@ -18,12 +20,12 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * The on-device LLM, for what OfflineParser's rules miss when there is no network.
- * RunAnywhere runs a small GGUF model with llama.cpp on the phone, and it answers in the
- * backend's Intent JSON (docs/API_CONTRACT.md). Phone actions and small talk only: web flows
- * need the network anyway.
+ * The on-device LLM: understands what the rules miss, and decides the on-device agent's next
+ * step. RunAnywhere runs a small GGUF model with llama.cpp on the phone, so nothing said or seen
+ * leaves it. Commands come back in the backend's Intent JSON (docs/API_CONTRACT.md), plus
+ * kind "app" for a task inside an app ([com.dietcode.diplo.exec.OnDeviceAgent]).
  *
- * Order in the app: OfflineParser (instant) -> backend /intent when online -> LocalBrain.
+ * Order in the app (private mode): OfflineParser and WebRules (instant) -> LocalBrain.
  */
 object LocalBrain {
 
@@ -67,13 +69,43 @@ object LocalBrain {
             load()
             // Qwen3 thinks before answering unless told not to; a voice command can't wait for that.
             val prompt = if (model.startsWith("qwen3")) "$text /no_think" else text
-            val options = LlmOptions(model = model, maxOutputTokens = 96, temperature = 0f, systemPrompt = SYSTEM_PROMPT)
+            val options = LlmOptions(model = model, maxOutputTokens = 120, temperature = 0f, systemPrompt = SYSTEM_PROMPT)
             val reply = RunAnywhere.llm.generate(prompt, options)
             Log.i(TAG, "on-device \"$text\" -> ${reply.text} (${reply.tokensPerSecond} tok/s)")
             fromReply(reply.text)
         } catch (e: SDKException) {
             Log.w(TAG, "on-device model failed: $e") // no model yet (it downloads while online), or no memory
             null
+        }
+    }
+
+    /** The on-device agent's next move on this [screen]; Stuck if the model can't run. */
+    suspend fun step(
+        context: Context,
+        goal: String,
+        app: String,
+        screen: List<ScreenElement>,
+        done: List<String>,
+    ): AgentStep = withContext(Dispatchers.Default) {
+        try {
+            start(context)
+            load()
+            val prompt = buildString {
+                appendLine("Goal: $goal")
+                appendLine("App: $app")
+                if (done.isNotEmpty()) appendLine("Done so far: ${done.joinToString("; ")}")
+                appendLine("Screen:")
+                // The top of the screen; every element shown costs prompt time on a phone CPU.
+                screen.take(STEP_ELEMENTS).forEach { appendLine(it.line()) }
+                if (model.startsWith("qwen3")) append("/no_think")
+            }
+            val options = LlmOptions(model = model, maxOutputTokens = 40, temperature = 0f, systemPrompt = STEP_PROMPT)
+            val reply = RunAnywhere.llm.generate(prompt, options)
+            Log.i(TAG, "on-device step for \"$goal\" -> ${reply.text} (${reply.tokensPerSecond} tok/s)")
+            AgentStep.parse(reply.text)
+        } catch (e: SDKException) {
+            Log.w(TAG, "on-device step failed: $e")
+            AgentStep.Stuck
         }
     }
 
@@ -109,11 +141,30 @@ object LocalBrain {
     // Short on purpose: on a phone CPU every prompt token costs time before the first word
     // (428 tokens took ~14 s on a moto g64).
     private const val SYSTEM_PROMPT = """Turn a spoken phone command (Hindi, Hinglish or English) into JSON:
-{"kind":"phone"|"chat"|"unknown","action":str,"params":{},"speak":str}
-Actions: call {contact}; send_message {contact,message,channel:"whatsapp"|"sms"}; set_alarm {hour:0-23,minute}; read_screen {}; open_app {app,query}; set_setting {setting:brightness|volume|torch|dnd|silent|font_size|wifi|bluetooth|mobile_data|location, value:up|down|auto|on|off|max|min|mute}; save_contact {name,number}; delete_contact {contact}.
-Complaints mean the fix: "sunai nahi deta" -> volume up, "aankhon mein chubh raha hai" -> brightness down, "shor" -> silent on.
+{"kind":"phone"|"app"|"web"|"chat"|"unknown","action":str,"params":{},"speak":str}
+phone actions: call {contact}; send_message {contact,message,channel:"whatsapp"|"sms"}; set_alarm {hour:0-23,minute}; open_app {app,query}; set_setting {setting:brightness|volume|torch|dnd|silent|font_size, value:up|down|auto|on|off|max|min|mute}.
+Complaints mean the fix: "sunai nahi deta" -> volume up, "aankhon mein chubh raha hai" -> brightness down.
+app, action app_task: anything else done inside an app: {app, goal: short English task, target: the button or setting to reach, destination, query}. Rides use the cab app the user names.
+web, action web_search: a question about facts, news, weather or schemes: {query}.
 Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else kind "unknown". JSON only.
-"papa ko phone lagao" -> {"kind":"phone","action":"call","params":{"contact":"papa"},"speak":""}"""
+"papa ko phone lagao" -> {"kind":"phone","action":"call","params":{"contact":"papa"}}
+"dark mode on karo" -> {"kind":"app","action":"app_task","params":{"app":"Settings","goal":"Turn on Dark theme","target":"Dark theme"}}
+"rapido se abes college ke liye bike book karo" -> {"kind":"app","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}"""
+
+    private const val STEP_ELEMENTS = 25
+
+    // For OnDeviceAgent: one action per call, so a short output.
+    private const val STEP_PROMPT = """You operate an Android phone for the user, one action at a time.
+Reply with one JSON action only:
+{"do":"tap","n":4} taps element 4; {"do":"type","n":2,"text":"..."} types into input 2;
+{"do":"scroll"}; {"do":"back"}; {"do":"done"} when the goal is reached; {"do":"stuck"} if it can't be done.
+Never tap a button that pays money."""
+
+    // Tasks that act for the user ask "haan" first; looking at or changing a setting doesn't.
+    private val risky = Regex(
+        """\b(book|order|send|call|pay|buy|delete|post|request|transfer|share|upload|message|reply)\b""",
+        RegexOption.IGNORE_CASE,
+    )
 
     // What Diplo says before acting: our wording, never the model's (backend apply_policy does the same).
     private val speakTemplates = mapOf(
@@ -147,7 +198,16 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
         // optString, not getString: small models send numbers ("hour": 6), and it reads them as text.
         val params = raw?.keys()?.asSequence()?.associateWith { raw.optString(it).trim() }
             ?.filterValues { it.isNotEmpty() } ?: emptyMap()
-        return when (json.optString("kind").lowercase()) {
+        val kind = json.optString("kind").lowercase()
+        // A task inside an app, for OnDeviceAgent. Small models sometimes label it kind "phone".
+        if (kind == "app" || action == "app_task") {
+            if (params["app"].isNullOrBlank()) return null
+            val goal = params["goal"].orEmpty()
+            // speak is filled in by AgentController, with the user's own words.
+            return AgentIntent(AgentIntent.Kind.PHONE, "app_task", params, needsConfirmation = risky.containsMatchIn(goal))
+        }
+        return when (kind) {
+            "web" -> params["query"]?.let(WebRules::search)
             "chat" -> json.optString("speak").trim().takeIf { it.isNotEmpty() }
                 ?.let { AgentIntent(AgentIntent.Kind.CHAT, speak = it) }
             "phone" -> {

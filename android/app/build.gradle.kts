@@ -15,6 +15,10 @@ val backendUrl: String = localProps.getProperty("diplo.backendUrl", "http://10.0
 // The on-device LLM (LocalBrain): any GGUF file, downloaded once while online. Keyless RunAnywhere
 // has an empty catalog, so the app registers this URL itself under the id.
 val localModel: String = localProps.getProperty("diplo.localModel", "qwen3-0.6b")
+// Private mode (the default): understanding and phone tasks stay on the phone, and only web
+// questions go to the backend for TinyFish. diplo.cloud=true sends every command to the backend
+// (Groq) and phone tasks to Google ARTEMIS instead.
+val cloudMode: Boolean = localProps.getProperty("diplo.cloud", "false").toBoolean()
 val localModelUrl: String = localProps.getProperty(
     "diplo.localModelUrl",
     "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf",
@@ -34,6 +38,7 @@ android {
         buildConfigField("String", "BACKEND_URL", "\"$backendUrl\"")
         buildConfigField("String", "LOCAL_MODEL", "\"$localModel\"")
         buildConfigField("String", "LOCAL_MODEL_URL", "\"$localModelUrl\"")
+        buildConfigField("boolean", "CLOUD_MODE", "$cloudMode")
         // Phones are arm64. RunAnywhere ships native libraries for every ABI, so this keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
     }

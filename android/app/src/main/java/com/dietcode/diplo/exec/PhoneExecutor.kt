@@ -102,7 +102,8 @@ class PhoneExecutor(private val context: Context) {
     }
 
     /** Opens the app; with a [query], plays it there (YouTube, YouTube Music, Spotify) or searches for it. */
-    private fun openApp(name: String, query: String): String {
+    /** The installed app whose launcher label best matches a spoken name: (package, label). */
+    fun findApp(name: String): Pair<String, String>? {
         val pm = context.packageManager
         val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val apps = pm.queryIntentActivities(launcher, 0)
@@ -110,11 +111,22 @@ class PhoneExecutor(private val context: Context) {
             .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
         // As with contacts, the parser can take words before the name ("ज़रा मेरा यूट्यूब").
         val words = name.trim().split(Regex("""\s+"""))
-        val (pkg, label) = words.indices.firstNotNullOfOrNull { drop ->
+        return words.indices.firstNotNullOfOrNull { drop ->
             val spoken = words.drop(drop).joinToString(" ")
             apps.mapNotNull { app -> AppNames.score(spoken, app.second)?.let { it to app } }
                 .minByOrNull { it.first }?.second
-        } ?: return "${name.replaceFirstChar(Char::titlecase)} नाम का ऐप नहीं मिला।"
+        }
+    }
+
+    /** Opens the app on its start screen; its label, or null if there is no such app. */
+    fun launch(name: String): String? {
+        val (pkg, label) = findApp(name) ?: return null
+        val open = context.packageManager.getLaunchIntentForPackage(pkg) ?: return null
+        return if (start(open)) label else null
+    }
+
+    private fun openApp(name: String, query: String): String {
+        val (pkg, label) = findApp(name) ?: return "${name.replaceFirstChar(Char::titlecase)} नाम का ऐप नहीं मिला।"
         if (query.isNotBlank()) {
             val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(pkg)
                 .putExtra(SearchManager.QUERY, query)
@@ -123,7 +135,7 @@ class PhoneExecutor(private val context: Context) {
             val search = Intent(Intent.ACTION_SEARCH).setPackage(pkg).putExtra(SearchManager.QUERY, query)
             if (start(search)) return "$label में $query खोज रहा हूं।"
         }
-        val open = pm.getLaunchIntentForPackage(pkg) ?: return "$label नहीं खुला।"
+        val open = context.packageManager.getLaunchIntentForPackage(pkg) ?: return "$label नहीं खुला।"
         return if (start(open)) "$label खोल रहा हूं।" else "$label नहीं खुला।"
     }
 
@@ -228,7 +240,7 @@ class PhoneExecutor(private val context: Context) {
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    private fun start(intent: Intent): Boolean = try {
+    fun start(intent: Intent): Boolean = try {
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         true
     } catch (e: ActivityNotFoundException) {

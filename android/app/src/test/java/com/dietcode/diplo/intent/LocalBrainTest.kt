@@ -52,10 +52,31 @@ class LocalBrainTest {
     }
 
     @Test
+    fun tasksInsideAppsGoToTheAgent() {
+        val dark = LocalBrain.fromReply(
+            """{"kind":"app","action":"app_task","params":{"app":"Settings","goal":"Turn on Dark theme","target":"Dark theme"}}""",
+        )!!
+        assertEquals("app_task", dark.action)
+        assertEquals("Dark theme", dark.params["target"])
+        assertEquals(false, dark.needsConfirmation) // changing a setting doesn't ask
+        assertEquals("", dark.speak) // AgentController asks in the user's own words
+        val ride = LocalBrain.fromReply(
+            """{"kind":"phone","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}""",
+        )!!
+        assertEquals(true, ride.needsConfirmation) // booking does
+        assertNull(LocalBrain.fromReply("""{"kind":"app","action":"app_task","params":{"goal":"Book a ride"}}"""))
+    }
+
+    @Test
+    fun webQuestionsGoToTinyFish() {
+        val intent = LocalBrain.fromReply("""{"kind":"web","action":"web_search","params":{"query":"aaj ka mausam"}}""")!!
+        assertEquals(mapOf("flow" to "web_search", "query" to "aaj ka mausam"), intent.params)
+    }
+
+    @Test
     fun anythingUnsafeOrBrokenIsDropped() {
         assertNull(LocalBrain.fromReply("""{"kind": "phone", "action": "pay_upi", "params": {}}"""))
         assertNull(LocalBrain.fromReply("""{"kind": "phone", "action": "call", "params": {}}"""))
-        assertNull(LocalBrain.fromReply("""{"kind": "web", "action": "web_search", "params": {"query": "x"}}"""))
         assertNull(LocalBrain.fromReply("""{"kind": "chat", "speak": ""}"""))
         assertNull(LocalBrain.fromReply("मुझे नहीं पता"))
         assertNull(LocalBrain.fromReply("""{"kind": "phone", "action": "call""""))

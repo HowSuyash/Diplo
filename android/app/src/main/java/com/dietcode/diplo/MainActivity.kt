@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         agent = AgentController(this, lifecycleScope)
         refreshPermissions()
+        debugCommand(intent)
 
         val savedLangCode = prefs.getString("preferred_language", "hi") ?: "hi"
         preferredLanguage = AppLanguage.entries.find { it.code == savedLangCode } ?: AppLanguage.Hindi
@@ -130,6 +131,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        debugCommand(intent)
+    }
+
+    // Debug builds only, for testing from a laptop without touching the phone:
+    //   adb shell am start -n com.dietcode.diplo/.MainActivity --es diplo_text "dark mode on karo"
+    // ("haan" answers a question the same way).
+    private fun debugCommand(intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        intent?.getStringExtra("diplo_text")?.let(agent::submitText)
     }
 
     private fun refreshPermissions() {

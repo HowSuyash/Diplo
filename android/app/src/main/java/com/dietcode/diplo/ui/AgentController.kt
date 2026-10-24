@@ -9,17 +9,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.dietcode.diplo.BuildConfig
 import com.dietcode.diplo.MainActivity
 import com.dietcode.diplo.exec.DiploAccessibilityService
+import com.dietcode.diplo.exec.OnDeviceAgent
 import com.dietcode.diplo.exec.PhoneExecutor
 import com.dietcode.diplo.intent.AgentIntent
+import com.dietcode.diplo.intent.AppTaskRules
 import com.dietcode.diplo.intent.LocalBrain
 import com.dietcode.diplo.intent.OfflineParser
+import com.dietcode.diplo.intent.WebRules
 import com.dietcode.diplo.net.BackendClient
 import com.dietcode.diplo.net.WebEvent
 import com.dietcode.diplo.voice.Speaker
 import com.dietcode.diplo.voice.SpeechInput
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import okhttp3.sse.EventSource
 import java.io.IOException
@@ -35,7 +40,9 @@ sealed interface UiState {
 
 /**
  * The listen -> understand -> confirm -> act -> reply loop. Lives on the main thread.
- * Phone commands are parsed on device first; everything else goes to the backend.
+ * Private mode (the default) understands and acts on the phone: rules, the on-device model and
+ * OnDeviceAgent; only web questions go to the backend, for TinyFish. Cloud mode
+ * (diplo.cloud=true) asks the backend first and lets Google ARTEMIS do phone tasks.
  */
 class AgentController(context: Context, private val scope: CoroutineScope) {
 
@@ -64,6 +71,8 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private val appContext = context.applicationContext
     private val executor = PhoneExecutor(context)
     private val backend = BackendClient()
+    private val agent = OnDeviceAgent(appContext, executor)
+    private var appTask: Job? = null // OnDeviceAgent at work inside an app
 
     init {
         // Fetch the on-device model now, while there is a network, so it is there offline.
@@ -114,6 +123,8 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             }
         }
         stopNotification.hide()
+        appTask?.cancel()
+        appTask = null
         webRun?.cancel()
         webRun = null
         runIntent = null
@@ -169,19 +180,28 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         heard = text
         state = UiState.Thinking(text)
         scope.launch {
-            // Online, the backend's model decides, and with Google ARTEMIS on it does any phone task
-            // itself. Offline, the phone's rules, then the on-device model for what they miss.
-            val intent = try {
-                backend.parseIntent(fullText, history.toList())
-            } catch (e: IOException) {
-                Log.w(TAG, "heard \"$fullText\": backend unreachable, understanding it on the phone: $e")
-                OfflineParser.parse(fullText) ?: LocalBrain.parse(appContext, fullText) ?: run {
-                    finish("सर्वर से नहीं जुड़ पाया। कॉल, मैसेज और अलार्म इसके बिना भी चलते हैं।", failed = true)
-                    return@launch
-                }
-            }
+            val intent = (if (BuildConfig.CLOUD_MODE) understandInCloud(fullText) else understandOnPhone(fullText))
+                ?: return@launch
             Log.i(TAG, "heard \"$fullText\" -> ${intent.kind} ${intent.action} ${intent.params}")
             handle(fullText, intent)
+        }
+    }
+
+    // Private mode: nothing said leaves the phone, except a web question on its way to TinyFish.
+    // The rules are instant; the on-device model takes a few seconds and only gets what they miss.
+    private suspend fun understandOnPhone(text: String): AgentIntent =
+        OfflineParser.parse(text) ?: AppTaskRules.parse(text) ?: WebRules.parse(text) ?: LocalBrain.parse(appContext, text)
+            ?: AgentIntent(AgentIntent.Kind.UNKNOWN, speak = "माफ़ कीजिए, मैं समझ नहीं पाया। फिर से बोलिए।")
+
+    // Cloud mode: the backend's model decides, and with Google ARTEMIS on it does phone tasks.
+    // Offline, the phone's rules, then the on-device model for what they miss.
+    private suspend fun understandInCloud(text: String): AgentIntent? = try {
+        backend.parseIntent(text, history.toList())
+    } catch (e: IOException) {
+        Log.w(TAG, "heard \"$text\": backend unreachable, understanding it on the phone: $e")
+        OfflineParser.parse(text) ?: LocalBrain.parse(appContext, text) ?: run {
+            finish("सर्वर से नहीं जुड़ पाया। कॉल, मैसेज और अलार्म इसके बिना भी चलते हैं।", failed = true)
+            null
         }
     }
 
@@ -200,8 +220,17 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             }
             intent.kind == AgentIntent.Kind.UNKNOWN -> finish(intent.speak, failed = true)
             intent.kind == AgentIntent.Kind.CHAT -> finish(intent.speak) // small talk: the reply is the answer
+            // A task inside an app: the question repeats the user's own words, never the model's.
+            intent.action == "app_task" && intent.speak.isEmpty() -> handle(
+                heard,
+                intent.copy(
+                    speak = if (intent.needsConfirmation) "फ़ोन पर यह करूं: ${heard.trim().trimEnd('।', '.', '!', '?')}?"
+                    else "ठीक है, कर रहा हूं।",
+                ),
+            )
             // Find the contact before asking, so "haan" confirms the person actually saved on the phone.
-            intent.kind == AgentIntent.Kind.PHONE && "contact" in intent.params && "number" !in intent.params -> {
+            intent.kind == AgentIntent.Kind.PHONE && intent.action != "app_task" &&
+                "contact" in intent.params && "number" !in intent.params -> {
                 val spoken = intent.params.getValue("contact")
                 val contact = executor.findContact(spoken)
                 Log.i(TAG, "contact \"$spoken\" -> ${contact?.name}")
@@ -230,7 +259,27 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     }
 
     private fun execute(intent: AgentIntent) {
-        if (intent.kind == AgentIntent.Kind.WEB) runWeb(intent) else finish(executor.execute(intent))
+        when {
+            intent.kind == AgentIntent.Kind.WEB -> runWeb(intent)
+            intent.action == "app_task" -> runAppTask(intent)
+            else -> finish(executor.execute(intent))
+        }
+    }
+
+    // A task inside an app, done on the phone by OnDeviceAgent: nothing seen leaves it. The app
+    // stays in front at the end, showing the result, and Diplo says how it went.
+    private fun runAppTask(intent: AgentIntent) {
+        state = UiState.Working()
+        speaker.say("ठीक है, कर रहा हूं।")
+        stopNotification.show(heard)
+        appTask = scope.launch {
+            val outcome = agent.run(intent.params) { step ->
+                (state as? UiState.Working)?.let { state = it.copy(steps = it.steps + step) }
+            }
+            appTask = null
+            stopNotification.hide()
+            finish(outcome.speak, failed = !outcome.ok)
+        }
     }
 
     private fun runWeb(intent: AgentIntent) {

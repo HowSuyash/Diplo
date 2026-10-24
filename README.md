@@ -106,7 +106,31 @@ WhatsApp confirmation. Voice input and the actual WhatsApp send need a real phon
 The build needs Android SDK Platform 37 (RunAnywhere requires it); Studio offers to install it,
 or run `sdkmanager "platforms;android-37.0"`.
 
-## Phone agent: anything else on the phone (Google ARTEMIS)
+## Private mode: everything on the phone (the default)
+
+Nothing said or seen on the phone leaves it. Diplo understands commands on the phone, with
+rules and then the RunAnywhere model (below), and does tasks inside apps with its own
+`OnDeviceAgent`. That is Google ARTEMIS's observe, decide, act loop, run on the phone:
+
+1. **Open the app on the right screen** (`DeepLinks`): Uber with the drop already set, YouTube on
+   its results, the Settings page for the task. Apps without a public link just open.
+2. **Rules first, instant:** tap what the user named ("Dark theme", flipping its switch only
+   if it isn't already as wanted), else search for it, else scroll.
+3. **The on-device model for the rest:** the accessibility service lists the screen as numbered
+   text (no screenshots), and the model picks one action: tap, type, scroll, back, done.
+
+The app never taps a final Pay button, never reads password fields, and asks "haan" before
+booking or sending. "रोकें" in the notification stops a task from any app. Only web questions
+leave the phone, through the backend to TinyFish. Common tasks (dark mode, rides in a named cab
+app, searching inside an app) skip the model entirely (`AppTaskRules`).
+
+`diplo.cloud=true` in `android/local.properties` switches to cloud mode: every command goes to
+the backend (Groq), and phone tasks to Google ARTEMIS (below).
+
+Testing from a laptop without touching the phone (debug builds):
+`adb shell am start -n com.dietcode.diplo/.MainActivity --es diplo_text "dark mode on karo"`.
+
+## Cloud phone agent: Google ARTEMIS (diplo.cloud=true)
 
 With ARTEMIS on, the phone's work is done by [Google ARTEMIS](https://github.com/google/artemis)
 on the laptop: calls, WhatsApp messages, settings, ride bookings, food orders, anything in any app
@@ -139,11 +163,12 @@ the runs.
 
 ## On-device LLM (RunAnywhere)
 
-Commands the rules don't catch still work with no network: `LocalBrain` runs a small model on the
-phone with [RunAnywhere](https://github.com/RunanywhereAI/runanywhere-sdks) (llama.cpp) and answers
-in the same Intent JSON, for phone actions and small talk. The model (`qwen3-0.6b` by default, a few
-hundred MB) downloads once while online; pick another catalog model with `diplo.localModel=` in
-`android/local.properties`. Online, the backend's bigger model answers first.
+Commands the rules don't catch are understood on the phone: `LocalBrain` runs a small model with
+[RunAnywhere](https://github.com/RunanywhereAI/runanywhere-sdks) (llama.cpp) and answers in the same
+Intent JSON, for phone actions, tasks inside apps, web questions and small talk. It also picks
+`OnDeviceAgent`'s steps. The model (Qwen3-0.6B Q4, ~400 MB) downloads once while online; point
+`diplo.localModel=` and `diplo.localModelUrl=` in `android/local.properties` at another GGUF (a
+bigger one understands more and runs slower). In cloud mode the backend's model answers first.
 
 ## How it works
 
