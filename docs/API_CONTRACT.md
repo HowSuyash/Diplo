@@ -60,8 +60,8 @@ Response (`Intent`):
 | Field | Values |
 |---|---|
 | `kind` | `phone`, `web`, `chat`, `clarify`, `unknown` |
-| `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `web_task`, `web_search`, `none` |
-| `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
+| `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `open_app`, `web_task`, `web_search`, `none` |
+| `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `open_app`: `app` (as spoken or as the phone shows it; the app matches it to launcher labels). `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
 | `needs_confirmation` | set by the backend safety policy, not by the model. Always `true` for `call`, `send_message`, `web_task`. `false` for `web_search`: it only reads public pages |
 | `speak` | what the app says next, in Hindi (Devanagari reads best with the hi-IN TTS voice) |
 

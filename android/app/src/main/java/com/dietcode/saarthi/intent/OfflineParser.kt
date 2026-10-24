@@ -23,6 +23,19 @@ object OfflineParser {
     private val nightWords = listOf("raat", "रात")
     private val pmWords = nightWords + listOf("shaam", "शाम", "dopahar", "दोपहर", "pm", "p.m")
 
+    // "<app> खोलो" / "<app> kholo" / "open <app>". Not "चालू करो": that is for the torch or Wi-Fi.
+    private val openTarget = Regex(
+        """^(.+?)\s+(?:को\s+|ko\s+)?(?:खोलो|खोल\s+दो|ओपन\s+करो|ओपन\s+कर\s+दो|चलाओ|लॉन्च\s+करो|""" +
+            """kholo|khol\s+do|open\s+karo|open\s+kar\s+do|chalao|launch\s+karo)$""",
+    )
+    private val openEnglish = Regex("""^(?:open|launch)\s+(.+)$""")
+    // "यूट्यूब पर सिद्धू मूसे वाला का गाना लगाओ": play inside an app. Only play verbs, because
+    // "इंटरनेट पर ... खोजो" is a web search.
+    private val playIn = Regex(
+        """^(.+?)\s+(?:पर|पे|में|pe|par|mein|me)\s+(.+?)\s+(?:लगाओ|लगा\s+दो|चलाओ|चला\s+दो|बजाओ|बजा\s+दो|सुनाओ|""" +
+            """lagao|laga\s+do|chalao|chala\s+do|bajao|baja\s+do|sunao|play\s+karo)$""",
+    )
+
     // "<name> को call करो" / "<name> ko call karo" / "call <name>"
     private val callTarget = Regex("""^(.+?)\s+(?:को|ko)\s""")
     private val callEnglish = Regex("""^call\s+(.+)$""")
@@ -72,6 +85,20 @@ object OfflineParser {
         }
 
         parseMessage(text)?.let { return it }
+
+        playIn.find(text)?.let { match ->
+            val (app, query) = match.destructured
+            return AgentIntent(
+                AgentIntent.Kind.PHONE, "open_app",
+                params = mapOf("app" to app.trim(), "query" to query.trim()),
+                speak = "${app.trim()} पर ${query.trim()} चला रहा हूं।",
+            )
+        }
+
+        (openTarget.find(text) ?: openEnglish.find(text))?.let { match ->
+            val app = match.groupValues[1].trim()
+            return AgentIntent(AgentIntent.Kind.PHONE, "open_app", params = mapOf("app" to app), speak = "$app खोल रहा हूं।")
+        }
 
         // "मुझे 6 बजे उठा देना" is an alarm too, but "phone uthao" without a time is not.
         val alarm = alarmWords.any { it in text }

@@ -24,6 +24,7 @@ _DEFAULT_SPEAK = {
     "send_message": "{contact} को यह मैसेज भेजूं: {message}?",
     "set_alarm": "{hour} बजकर {minute} मिनट का अलार्म लगा रहा हूं।",
     "read_screen": "स्क्रीन पढ़ रहा हूं।",
+    "open_app": "{app} खोल रहा हूं।",
 }
 
 _DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -123,6 +124,8 @@ Phone actions and params:
   इंट्रोडक्शन लिखो", "birthday wish likh do"), write it yourself, ready to send.
 - set_alarm: {"hour": 0-23, "minute": 0-59, "label": optional}
 - read_screen: {}
+- open_app: {"app": the app's name as the phone shows it, in English letters, e.g. "YouTube",
+  "query": optional, what to play or search for inside it ("सिद्धू मूसे वाला के गाने")}
 Web actions:
 - web_task: {"flow": one of %s, plus that flow's fields}
 - web_search: {"query": the question} for any other question about facts: government schemes,

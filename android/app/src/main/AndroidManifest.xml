@@ -15,6 +15,11 @@
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
         <package android:name="com.whatsapp" />
+        <!-- "YouTube kholo": find the launcher app whose name was spoken. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <!-- usesCleartextTraffic: the backend runs over plain HTTP on the laptop during the hackathon.

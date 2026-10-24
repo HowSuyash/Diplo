@@ -38,6 +38,7 @@ object ContactNames {
 
     private const val LATIN_VOWELS = "aeiou"
     private val aspiration = Regex("([^aeiouh])h")
+    private val softC = Regex("c(?=[eiy])")
     private val wordBreak = Regex("""[^\p{L}\p{M}]+""")
 
     // Said around a name but rarely saved with it: "Sharma ji", "Rahul bhai".
@@ -62,7 +63,8 @@ object ContactNames {
     internal fun key(word: String): String {
         var s = romanize(word).filter { it in 'a'..'z' }
         if (s.isEmpty()) return ""
-        s = s.replace("x", "ks").replace("chh", "x").replace("ch", "x").replace("ck", "k").replace("c", "k")
+        s = s.replace("x", "ks").replace("chh", "x").replace("ch", "x").replace("ck", "k")
+        s = softC.replace(s, "s").replace("c", "k") // "Lucy", "Facebook": c before e/i/y sounds like s
             .replace("sh", "s").replace("ph", "f").replace('w', 'v').replace('z', 'j').replace('q', 'k')
         s = aspiration.replace(s, "$1")
         // A final y after a consonant is a vowel sound: "Mummy", "Vicky".

@@ -111,6 +111,31 @@ class OfflineParserTest {
     }
 
     @Test
+    fun openApps() {
+        for ((text, app) in listOf(
+            "यूट्यूब खोलो" to "यूट्यूब", "ज़रा कैमरा खोल दो" to "ज़रा कैमरा", "WhatsApp kholo" to "whatsapp",
+            "open youtube" to "youtube", "इंस्टाग्राम ओपन करो" to "इंस्टाग्राम",
+        )) {
+            val intent = OfflineParser.parse(text)!!
+            assertEquals(text, "open_app", intent.action)
+            assertEquals(text, app, intent.params["app"])
+        }
+        // Turning things on is a setting, not an app.
+        assertNull(OfflineParser.parse("कैमरा चालू करो"))
+    }
+
+    @Test
+    fun playInsideAnApp() {
+        val intent = OfflineParser.parse("यूट्यूब पर सिद्धू मूसे वाला का गाना लगाओ")!!
+        assertEquals("open_app", intent.action)
+        assertEquals(mapOf("app" to "यूट्यूब", "query" to "सिद्धू मूसे वाला का गाना"), intent.params)
+        assertEquals("गाने", OfflineParser.parse("यूट्यूब पर गाने बजाओ")!!.params["query"])
+        assertEquals("spotify", OfflineParser.parse("spotify pe arijit ke gaane chalao")!!.params["app"])
+        // Searching the web is not playing in an app.
+        assertNull(OfflineParser.parse("इंटरनेट पर पीएम किसान के बारे में खोजो"))
+    }
+
+    @Test
     fun readScreen() {
         assertEquals("read_screen", OfflineParser.parse("Screen pe kya likha hai padho")!!.action)
     }

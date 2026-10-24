@@ -1,6 +1,7 @@
 package com.dietcode.saarthi.exec
 
 import android.Manifest
+import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -10,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.MediaStore
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.dietcode.saarthi.intent.AgentIntent
@@ -32,6 +34,7 @@ class PhoneExecutor(private val context: Context) {
             }
             "set_alarm" -> setAlarm(p["hour"]?.toIntOrNull(), p["minute"]?.toIntOrNull() ?: 0, p["label"].orEmpty())
             "read_screen" -> readScreen()
+            "open_app" -> openApp(p["app"].orEmpty(), p["query"].orEmpty())
             else -> "यह काम मैं अभी नहीं कर सकता।"
         }
     }
@@ -70,6 +73,32 @@ class PhoneExecutor(private val context: Context) {
             .putExtra(AlarmClock.EXTRA_MESSAGE, label.ifEmpty { "Saarthi" })
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
         return if (start(alarm)) "$hour बजकर $minute मिनट का अलार्म लगा दिया।" else "अलार्म नहीं लग पाया।"
+    }
+
+    /** Opens the app; with a [query], plays it there (YouTube, YouTube Music, Spotify) or searches for it. */
+    private fun openApp(name: String, query: String): String {
+        val pm = context.packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcher, 0)
+            .filter { it.activityInfo.packageName != context.packageName }
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+        // As with contacts, the parser can take words before the name ("ज़रा मेरा यूट्यूब").
+        val words = name.trim().split(Regex("""\s+"""))
+        val (pkg, label) = words.indices.firstNotNullOfOrNull { drop ->
+            val spoken = words.drop(drop).joinToString(" ")
+            apps.mapNotNull { app -> AppNames.score(spoken, app.second)?.let { it to app } }
+                .minByOrNull { it.first }?.second
+        } ?: return "${name.replaceFirstChar(Char::titlecase)} नाम का ऐप नहीं मिला।"
+        if (query.isNotBlank()) {
+            val play = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(pkg)
+                .putExtra(SearchManager.QUERY, query)
+                .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            if (start(play)) return "$label पर $query चला रहा हूं।"
+            val search = Intent(Intent.ACTION_SEARCH).setPackage(pkg).putExtra(SearchManager.QUERY, query)
+            if (start(search)) return "$label में $query खोज रहा हूं।"
+        }
+        val open = pm.getLaunchIntentForPackage(pkg) ?: return "$label नहीं खुला।"
+        return if (start(open)) "$label खोल रहा हूं।" else "$label नहीं खुला।"
     }
 
     private fun readScreen(): String {
