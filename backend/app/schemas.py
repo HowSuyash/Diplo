@@ -9,7 +9,7 @@ Kind = Literal["phone", "web", "chat", "clarify", "unknown"]
 
 class Turn(BaseModel):
     user: str
-    saarthi: str
+    diplo: str
 
 
 class IntentRequest(BaseModel):

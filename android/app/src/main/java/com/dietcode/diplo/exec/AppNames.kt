@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.exec
+package com.dietcode.diplo.exec
 
 /**
  * Matches a spoken app name to launcher labels with ContactNames' sound key, loosened for how

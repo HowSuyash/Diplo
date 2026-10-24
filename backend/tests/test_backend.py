@@ -61,12 +61,12 @@ def test_invented_phone_actions_are_refused():
 
 
 def test_history_reaches_the_model_as_context():
-    history = [Turn(user="अपना इंट्रोडक्शन लिखो", saarthi="मैं सारथी हूँ।")]
+    history = [Turn(user="अपना इंट्रोडक्शन लिखो", diplo="मैं डिप्लो हूँ।")]
     prompt = _with_history("यह मैसेज सुयश को भेजो", history)
-    assert prompt.startswith("Earlier in this conversation:\nUser: अपना इंट्रोडक्शन लिखो\nSaarthi: मैं सारथी हूँ।")
+    assert prompt.startswith("Earlier in this conversation:\nUser: अपना इंट्रोडक्शन लिखो\nDiplo: मैं डिप्लो हूँ।")
     assert prompt.endswith("The user now says: यह मैसेज सुयश को भेजो")
     assert _with_history("नमस्ते", []) == "नमस्ते"
-    body = {"text": "kuch bhi", "history": [{"user": "a", "saarthi": "b"}]}
+    body = {"text": "kuch bhi", "history": [{"user": "a", "diplo": "b"}]}
     assert client.post("/intent", json=body).status_code == 200
 
 
@@ -164,7 +164,7 @@ def test_flows_list_includes_web_search():
 def test_web_client_is_served():
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "<title>Saarthi</title>" in resp.text
+    assert "<title>Diplo</title>" in resp.text
 
 
 class _FakeTinyFish:

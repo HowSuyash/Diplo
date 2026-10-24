@@ -1,4 +1,4 @@
-"""Saarthi backend: intent parsing and TinyFish web flows for the Android app and the web client.
+"""Diplo backend: intent parsing and TinyFish web flows for the Android app and the web client.
 
 Run:  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
-app = FastAPI(title="Saarthi backend", version="0.2.0")
+app = FastAPI(title="Diplo backend", version="0.2.0")
 
 
 @app.get("/health")

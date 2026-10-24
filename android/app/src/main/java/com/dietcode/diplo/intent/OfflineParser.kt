@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.intent
+package com.dietcode.diplo.intent
 
 /**
  * On-device parser for the phone commands, so they work with no network.
@@ -295,9 +295,9 @@ object OfflineParser {
 
     // Not "बस": it also means "bus".
     private val stopWords = listOf("stop", "ruko", "रुको")
-    // Only on their own: "टॉर्च बंद करो" turns the torch off, it doesn't stop Saarthi.
+    // Only on their own: "टॉर्च बंद करो" turns the torch off, it doesn't stop Diplo.
     private val stopPhrases = listOf("band karo", "band kar do", "बंद करो", "बंद कर दो")
-    private val stopFillers = setOf("सारथी", "saarthi", "अरे", "are", "please", "प्लीज", "ji", "जी")
+    private val stopFillers = setOf("डिप्लो", "diplo", "अरे", "are", "please", "प्लीज", "ji", "जी")
 
     fun isStop(raw: String): Boolean {
         val text = raw.trim().lowercase()

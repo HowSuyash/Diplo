@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.intent
+package com.dietcode.diplo.intent
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

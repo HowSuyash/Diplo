@@ -1,7 +1,7 @@
-package com.dietcode.saarthi.net
+package com.dietcode.diplo.net
 
-import com.dietcode.saarthi.BuildConfig
-import com.dietcode.saarthi.intent.AgentIntent
+import com.dietcode.diplo.BuildConfig
+import com.dietcode.diplo.intent.AgentIntent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -44,10 +44,10 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
     private val streaming = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).build()
     private val json = "application/json; charset=utf-8".toMediaType()
 
-    /** [history] is the last few (user said, Saarthi said) pairs, oldest first. */
+    /** [history] is the last few (user said, Diplo said) pairs, oldest first. */
     suspend fun parseIntent(text: String, history: List<Pair<String, String>> = emptyList()): AgentIntent =
         withContext(Dispatchers.IO) {
-            val turns = history.map { (user, saarthi) -> JSONObject().put("user", user).put("saarthi", saarthi) }
+            val turns = history.map { (user, diplo) -> JSONObject().put("user", user).put("diplo", diplo) }
             val body = JSONObject().put("text", text).put("history", JSONArray(turns)).toString().toRequestBody(json)
             val request = Request.Builder().url("$baseUrl/intent").post(body).build()
             http.newCall(request).execute().use { resp ->

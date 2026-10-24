@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.exec
+package com.dietcode.diplo.exec
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

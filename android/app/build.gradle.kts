@@ -6,19 +6,19 @@ plugins {
 }
 
 // Backend address. The emulator reaches your laptop at 10.0.2.2; for a real phone put
-// saarthi.backendUrl=http://<laptop-LAN-IP>:8000 in android/local.properties (not committed).
+// diplo.backendUrl=http://<laptop-LAN-IP>:8000 in android/local.properties (not committed).
 val localProps = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
-val backendUrl: String = localProps.getProperty("saarthi.backendUrl", "http://10.0.2.2:8000")
+val backendUrl: String = localProps.getProperty("diplo.backendUrl", "http://10.0.2.2:8000")
 
 android {
-    namespace = "com.dietcode.saarthi"
+    namespace = "com.dietcode.diplo"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.dietcode.saarthi"
+        applicationId = "com.dietcode.diplo"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

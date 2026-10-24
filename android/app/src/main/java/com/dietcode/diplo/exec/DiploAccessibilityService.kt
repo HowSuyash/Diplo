@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.exec
+package com.dietcode.diplo.exec
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -7,13 +7,13 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 /**
  * Reads and taps other apps' screens. The user enables it once in
- * Settings > Accessibility > Saarthi (on Android 13+ sideloaded apps first need
+ * Settings > Accessibility > Diplo (on Android 13+ sideloaded apps first need
  * App info > ⋮ > "Allow restricted settings").
  *
  * TODO(track A): use the accessibility button (flagRequestAccessibilityButton) to start
- * listening from inside any app, so "screen padho" reads that app, not Saarthi.
+ * listening from inside any app, so "screen padho" reads that app, not Diplo.
  */
-class SaarthiAccessibilityService : AccessibilityService() {
+class DiploAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
@@ -66,7 +66,7 @@ class SaarthiAccessibilityService : AccessibilityService() {
 
     companion object {
         @Volatile
-        var instance: SaarthiAccessibilityService? = null
+        var instance: DiploAccessibilityService? = null
             private set
     }
 }

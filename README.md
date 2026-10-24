@@ -79,7 +79,7 @@ work step by step, hear the answer. Phone commands (call, WhatsApp, alarm) stay 
    terminal: set `JAVA_HOME` to Studio's `jbr` folder, then `gradlew assembleDebug` (unit tests:
    `gradlew :app:testDebugUnitTest`).
 2. Point the app at the backend in `android/local.properties`. Easiest, and immune to venue Wi-Fi:
-   `saarthi.backendUrl=http://127.0.0.1:8000`, then run `adb reverse tcp:8000 tcp:8000` each time
+   `diplo.backendUrl=http://127.0.0.1:8000`, then run `adb reverse tcp:8000 tcp:8000` each time
    the phone is plugged in over USB. Over the air, use `http://<your-laptop-LAN-IP>:8000` or a
    tunnel URL instead. Without the setting the emulator default `http://10.0.2.2:8000` is used.
 

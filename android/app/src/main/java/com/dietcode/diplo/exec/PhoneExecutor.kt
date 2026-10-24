@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.exec
+package com.dietcode.diplo.exec
 
 import android.Manifest
 import android.app.SearchManager
@@ -22,7 +22,7 @@ import android.provider.ContactsContract.RawContacts
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.dietcode.saarthi.intent.AgentIntent
+import com.dietcode.diplo.intent.AgentIntent
 
 /** Runs confirmed phone intents with Android Intents, falling back to accessibility taps. */
 class PhoneExecutor(private val context: Context) {
@@ -31,7 +31,7 @@ class PhoneExecutor(private val context: Context) {
 
     private val settings = PhoneSettings(context)
 
-    /** Returns what Saarthi should say about the result. */
+    /** Returns what Diplo should say about the result. */
     fun execute(intent: AgentIntent): String {
         val p = intent.params
         return when (intent.action) {
@@ -79,12 +79,12 @@ class PhoneExecutor(private val context: Context) {
     // can take several seconds, so keep trying for ~9 s, and only while WhatsApp is in front.
     private fun tapWhatsAppSend(attempt: Int = 0) {
         Handler(Looper.getMainLooper()).postDelayed({
-            val service = SaarthiAccessibilityService.instance
+            val service = DiploAccessibilityService.instance
             val inWhatsApp = service?.activePackage() == "com.whatsapp"
             val tapped = inWhatsApp && service != null &&
                 (service.clickById("com.whatsapp:id/send") || service.clickByText("Send"))
             if (tapped || service == null || attempt >= 16) {
-                Log.i("Saarthi", "WhatsApp Send tapped: $tapped (try ${attempt + 1}, in WhatsApp: $inWhatsApp)")
+                Log.i("Diplo", "WhatsApp Send tapped: $tapped (try ${attempt + 1}, in WhatsApp: $inWhatsApp)")
             } else {
                 tapWhatsAppSend(attempt + 1)
             }
@@ -96,7 +96,7 @@ class PhoneExecutor(private val context: Context) {
         val alarm = Intent(AlarmClock.ACTION_SET_ALARM)
             .putExtra(AlarmClock.EXTRA_HOUR, hour)
             .putExtra(AlarmClock.EXTRA_MINUTES, minute)
-            .putExtra(AlarmClock.EXTRA_MESSAGE, label.ifEmpty { "Saarthi" })
+            .putExtra(AlarmClock.EXTRA_MESSAGE, label.ifEmpty { "Diplo" })
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
         return if (start(alarm)) "$hour बजकर $minute मिनट का अलार्म लगा दिया।" else "अलार्म नहीं लग पाया।"
     }
@@ -176,8 +176,8 @@ class PhoneExecutor(private val context: Context) {
     }
 
     private fun readScreen(): String {
-        val service = SaarthiAccessibilityService.instance
-            ?: return "पहले सेटिंग्स में Saarthi की एक्सेसिबिलिटी चालू कीजिए।"
+        val service = DiploAccessibilityService.instance
+            ?: return "पहले सेटिंग्स में Diplo की एक्सेसिबिलिटी चालू कीजिए।"
         val lines = service.readScreen()
         return if (lines.isEmpty()) "स्क्रीन पर कुछ लिखा नहीं मिला।" else lines.joinToString(". ")
     }

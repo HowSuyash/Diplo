@@ -1,7 +1,7 @@
 """General questions answered from the live web with TinyFish Search and Fetch.
 
 "PM Kisan yojana kya hai" -> Search ranks pages -> Fetch reads the page behind the best snippet ->
-Saarthi speaks that snippet's sentences in full, quoted from the page. Nothing is generated, so
+Diplo speaks that snippet's sentences in full, quoted from the page. Nothing is generated, so
 nothing is made up. With ANSWER_WITH_LLM=1 an LLM writes the answer from the top pages instead.
 Search and Fetch are free, so this runs without asking the user first.
 """

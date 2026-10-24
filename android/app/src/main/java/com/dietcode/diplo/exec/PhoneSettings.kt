@@ -1,4 +1,4 @@
-package com.dietcode.saarthi.exec
+package com.dietcode.diplo.exec
 
 import android.app.NotificationManager
 import android.content.ActivityNotFoundException
@@ -14,16 +14,16 @@ import android.provider.Settings
 /**
  * Changes phone settings by voice: brightness, volume, torch, Do Not Disturb, silent, text size.
  * Android 10+ doesn't let apps switch Wi-Fi, Bluetooth, mobile data or location, so for those
- * Saarthi opens the right settings panel.
+ * Diplo opens the right settings panel.
  *
  * Brightness and text size need "Modify system settings", Do Not Disturb needs "Do Not Disturb
- * access"; without them Saarthi opens that permission page and says so. Over adb:
- *   adb shell appops set com.dietcode.saarthi WRITE_SETTINGS allow
- *   adb shell cmd notification allow_dnd com.dietcode.saarthi
+ * access"; without them Diplo opens that permission page and says so. Over adb:
+ *   adb shell appops set com.dietcode.diplo WRITE_SETTINGS allow
+ *   adb shell cmd notification allow_dnd com.dietcode.diplo
  */
 class PhoneSettings(private val context: Context) {
 
-    /** [value]: up | down | auto | on | off | max | min | mute. Returns what Saarthi should say. */
+    /** [value]: up | down | auto | on | off | max | min | mute. Returns what Diplo should say. */
     fun apply(setting: String, value: String): String = when (setting) {
         "brightness" -> brightness(value)
         "volume" -> volume(value)
@@ -106,7 +106,7 @@ class PhoneSettings(private val context: Context) {
         val notifications = context.getSystemService(NotificationManager::class.java)
         if (!notifications.isNotificationPolicyAccessGranted) {
             start(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-            return "पहले Saarthi को Do Not Disturb की अनुमति दीजिए, फिर दोबारा बोलिए।"
+            return "पहले Diplo को Do Not Disturb की अनुमति दीजिए, फिर दोबारा बोलिए।"
         }
         notifications.setInterruptionFilter(
             if (on) NotificationManager.INTERRUPTION_FILTER_PRIORITY else NotificationManager.INTERRUPTION_FILTER_ALL,
@@ -144,7 +144,7 @@ class PhoneSettings(private val context: Context) {
 
     private fun askToModifySettings(what: String): String {
         start(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${context.packageName}")))
-        return "$what बदलने के लिए Saarthi को सिस्टम सेटिंग बदलने की अनुमति दीजिए, फिर दोबारा बोलिए।"
+        return "$what बदलने के लिए Diplo को सिस्टम सेटिंग बदलने की अनुमति दीजिए, फिर दोबारा बोलिए।"
     }
 
     private fun start(intent: Intent): Boolean = try {
