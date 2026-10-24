@@ -27,6 +27,9 @@ async def chat(system: str, user: str, *, json_mode: bool = False, timeout: floa
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
+    if config.LLM_REASONING_EFFORT:
+        # Reasoning models (gpt-oss on Groq) think before answering; "low" keeps voice replies fast.
+        body["reasoning_effort"] = config.LLM_REASONING_EFFORT
     headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"} if config.LLM_API_KEY else {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

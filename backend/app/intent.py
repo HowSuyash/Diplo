@@ -10,7 +10,7 @@ import re
 
 from . import ask, llm
 from .flows import FLOWS
-from .schemas import Intent
+from .schemas import Intent, Turn
 
 log = logging.getLogger(__name__)
 
@@ -30,10 +30,15 @@ _DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789
 
 _FLOW_KEYWORDS = {
     "scholarship_status": ("scholarship", "स्कॉलरशिप", "स्कालरशिप", "छात्रवृत्ति", "chhatravritti"),
-    "pnr_status": ("pnr", "पीएनआर", "पी एन आर"),
+    # The recognizer often mangles "PNR", so the ticket itself works as a keyword too.
+    "pnr_status": (
+        "pnr", "पीएनआर", "पी एन आर", "train ticket", "ticket status", "ticket ka status",
+        "ट्रेन टिकट", "टिकट का स्टेटस", "टिकट स्टेटस",
+    ),
 }
 
 _NOT_UNDERSTOOD = "माफ़ कीजिए, मैं समझ नहीं पाया। फिर से बोलिए।"
+_CANT_DO = "यह मैं अभी नहीं कर सकता। कॉल, मैसेज, अलार्म या कोई सवाल पूछिए।"
 
 # A general question goes to TinyFish Search. Latin words match whole words ("what" must not
 # match "whatsapp"); Devanagari matches substrings, because its vowel signs break \b.
@@ -89,7 +94,7 @@ def _is_question(lowered: str) -> bool:
     return bool(_ASK_LATIN.search(lowered)) or any(w in lowered for w in _ASK_DEVANAGARI)
 
 
-def match_rules(text: str) -> Intent | None:
+def match_flow(text: str) -> Intent | None:
     lowered = text.lower()
     for flow_id, words in _FLOW_KEYWORDS.items():
         if not any(w in lowered for w in words):
@@ -98,30 +103,54 @@ def match_rules(text: str) -> Intent | None:
         if flow_id == "pnr_status":
             return _web_intent(flow_id, {"pnr": digits} if len(digits) == 10 else {})
         return _web_intent(flow_id, {"application_id": digits} if digits else {})
-    if _is_question(lowered):
-        return search_intent(text)
     return None
 
 
+def match_rules(text: str) -> Intent | None:
+    """Portal flows, then question words for web search. Used as-is when there is no LLM."""
+    if intent := match_flow(text):
+        return intent
+    return search_intent(text) if _is_question(text.lower()) else None
+
+
 _SYSTEM_PROMPT = """You turn a spoken command (English, Hindi or Hinglish) into one JSON object:
-{"kind": "phone"|"web"|"clarify"|"unknown", "action": str, "params": {str: str}, "speak": str}
+{"kind": "phone"|"web"|"chat"|"clarify"|"unknown", "action": str, "params": {str: str}, "speak": str}
 
 Phone actions and params:
 - call: {"contact": name as spoken}
-- send_message: {"contact": name, "message": text in the user's language, "channel": "whatsapp"|"sms"}
+- send_message: {"contact": name, "message": text in the user's language, "channel": "whatsapp"
+  unless the user says SMS, then "sms"}. If the user asks you to write the message ("अपना
+  इंट्रोडक्शन लिखो", "birthday wish likh do"), write it yourself, ready to send.
 - set_alarm: {"hour": 0-23, "minute": 0-59, "label": optional}
 - read_screen: {}
 Web actions:
 - web_task: {"flow": one of %s, plus that flow's fields}
-- web_search: {"query": the question} for any other question that needs facts or current
-  information from the web (government schemes, news, weather, prices).
+- web_search: {"query": the question} for any other question about facts: government schemes,
+  news, weather, prices, sports, people, places, or anything that could have changed. Even if
+  you know the answer, use web_search so it comes from a live page.
+Chat: only for greetings, jokes, small talk and questions about Saarthi itself. Use kind
+"chat", action "none", and put the reply itself in "speak": one or two short, friendly
+sentences, like a helpful assistant talking out loud. You are Saarthi, a voice agent that
+makes calls, sends WhatsApp messages, sets alarms and checks government portals.
+Earlier turns, when given, are context: use them to resolve "यह", "वो", "उसे", "it" ("यह मैसेज
+सुरेश को भेजो" sends Saarthi's last reply; "कौन जीता" after a cricket question asks about that
+match). Then write a web_search "query" as a complete question in the user's language.
 If a required detail is missing use kind "clarify" and ask for it in "speak".
-"speak" is a short reply in Hindi written in Devanagari, e.g. a confirmation question.
+"speak" is short and in the user's language: Hindi written in Devanagari for Hindi or Hinglish,
+English for English. The recognizer writes English in Devanagari too ("कैन यू हेल्प मी"), so
+judge by the words, not the script.
 Reply with JSON only."""
 
 
-async def llm_parse(text: str) -> Intent | None:
-    content = await llm.chat(_SYSTEM_PROMPT % list(FLOWS), text, json_mode=True)
+def _with_history(text: str, history: list[Turn]) -> str:
+    if not history:
+        return text
+    earlier = "\n".join(f"User: {t.user}\nSaarthi: {t.saarthi}" for t in history)
+    return f"Earlier in this conversation:\n{earlier}\n\nThe user now says: {text}"
+
+
+async def llm_parse(text: str, history: list[Turn] | None = None) -> Intent | None:
+    content = await llm.chat(_SYSTEM_PROMPT % list(FLOWS), _with_history(text, history), json_mode=True)
     if content is None:
         return None
     try:
@@ -133,7 +162,13 @@ async def llm_parse(text: str) -> Intent | None:
         log.warning("LLM intent parse failed for %r: %s", text, e)
         return None
     if intent.action == "web_search":
-        return search_intent(intent.params.get("query") or text)
+        # Alone, the user's own words search best and keep the answer in their language;
+        # a follow-up needs the model's query, which folds in what "it" refers to.
+        return search_intent((intent.params.get("query") if history else None) or text)
+    if intent.action == "web_task" and intent.params.get("flow") in FLOWS:
+        # The flow's own wording: it asks for missing fields and confirms before a billed run.
+        params = {k: v for k, v in intent.params.items() if k != "flow"}
+        return _web_intent(intent.params["flow"], params)
     return intent
 
 
@@ -141,6 +176,20 @@ def apply_policy(intent: Intent) -> Intent:
     """The model never decides whether to ask first; this does."""
     if intent.action in SENSITIVE_ACTIONS:
         intent.needs_confirmation = True
+    if intent.kind == "phone":
+        # Small models invent phone actions ("speak" for "joke sunao") that the app can't run.
+        if intent.action not in _DEFAULT_SPEAK:
+            return Intent(kind="unknown", speak=_CANT_DO)
+        # Our wording, not the model's: it says "संदेश भेज दिया" before the user has said haan.
+        # A written message ends in "।", and "...हूँ।?" reads badly in the question.
+        shown = {k: v.rstrip("।.!? ") if k == "message" else v for k, v in intent.params.items()}
+        try:
+            intent.speak = _DEFAULT_SPEAK[intent.action].format(**shown)
+        except KeyError:
+            return Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
+        return intent
+    if intent.kind == "chat":
+        return Intent(kind="chat", speak=intent.speak) if intent.speak else Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
     if intent.action == "web_task" and intent.params.get("flow") not in FLOWS:
         return Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
     if not intent.speak:
@@ -152,8 +201,10 @@ def apply_policy(intent: Intent) -> Intent:
     return intent
 
 
-async def parse(text: str) -> Intent:
-    intent = match_rules(text) or await llm_parse(text)
+async def parse(text: str, history: list[Turn] | None = None) -> Intent:
+    # With a model, it tells small talk ("नमस्ते कैसे हो") from web questions ("मौसम कैसा है");
+    # the question-word rules take over when it is off or fails.
+    intent = match_flow(text) or await llm_parse(text, history) or match_rules(text)
     if intent is None:
         return Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
     return apply_policy(intent)

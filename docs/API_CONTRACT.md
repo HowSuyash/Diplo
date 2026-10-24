@@ -37,6 +37,14 @@ Request:
 { "text": "मेरी स्कॉलरशिप का स्टेटस बताओ", "lang": "hi-IN" }
 ```
 
+Optional `history`: the last few exchanges, oldest first (at most 6), so the LLM can resolve
+follow-ups like "यह मैसेज सुरेश को भेजो" or "कौन जीता":
+
+```json
+{ "text": "यह मैसेज सुयश को भेजो",
+  "history": [{ "user": "अपना इंट्रोडक्शन लिखो", "saarthi": "मैं सारथी हूँ, ..." }] }
+```
+
 Response (`Intent`):
 
 ```json
@@ -51,7 +59,7 @@ Response (`Intent`):
 
 | Field | Values |
 |---|---|
-| `kind` | `phone`, `web`, `clarify`, `unknown` |
+| `kind` | `phone`, `web`, `chat`, `clarify`, `unknown` |
 | `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `web_task`, `web_search`, `none` |
 | `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
 | `needs_confirmation` | set by the backend safety policy, not by the model. Always `true` for `call`, `send_message`, `web_task`. `false` for `web_search`: it only reads public pages |
@@ -63,6 +71,10 @@ Response (`Intent`):
 **Web questions:** general questions ("PM Kisan yojana kya hai", "आज दिल्ली का मौसम कैसा है")
 come back as `web_search` with `kind: "web"`, so the app runs them through `/web/run` like any
 other flow, without asking first.
+
+**Chat:** small talk the LLM can answer itself ("एक जोक सुनाओ", "तुम क्या कर सकते हो") comes
+back as `kind: "chat"`, `action: "none"`, with the reply in `speak`. The app just says it. Needs
+the LLM fallback; without one these are `unknown`.
 
 ## `POST /web/run`
 

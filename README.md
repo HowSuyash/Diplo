@@ -82,6 +82,19 @@ work step by step, hear the answer. Phone commands (call, WhatsApp, alarm) stay 
    `saarthi.backendUrl=http://127.0.0.1:8000`, then run `adb reverse tcp:8000 tcp:8000` each time
    the phone is plugged in over USB. Over the air, use `http://<your-laptop-LAN-IP>:8000` or a
    tunnel URL instead. Without the setting the emulator default `http://10.0.2.2:8000` is used.
+
+   **No reliable cable?** `adb reverse` works over wireless debugging too, with the same
+   `127.0.0.1` build. Put the phone and laptop on one Wi-Fi, turn on Developer options →
+   *Wireless debugging*, tap *Pair device with pairing code*, then:
+
+   ```bash
+   adb pair <ip>:<pairing-port> <6-digit-code>    # once per laptop
+   adb connect <ip>:<port>                        # the port shown on the Wireless debugging screen
+   adb -s <ip>:<port> reverse tcp:8000 tcp:8000
+   ```
+
+   Wireless debugging needs the phone to be a Wi-Fi client, not a hotspot: at a venue, turn on
+   the laptop's Mobile hotspot and join it from the phone.
 3. Run on the phone and grant mic, phone and contacts permissions.
 4. To read the screen and tap Send, enable **Settings → Accessibility → Diplo**. On Android 13+, first go to App info → ⋮ → *Allow restricted settings*.
 5. For offline Hindi speech, download the Hindi offline speech pack in the phone's Google voice

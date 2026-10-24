@@ -49,7 +49,7 @@ async def flows() -> list[dict[str, Any]]:
 
 @app.post("/intent", response_model=Intent)
 async def parse_intent(req: IntentRequest) -> Intent:
-    return await intent.parse(req.text)
+    return await intent.parse(req.text, req.history)
 
 
 def _sse(event: dict[str, Any]) -> str:

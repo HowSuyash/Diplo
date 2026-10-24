@@ -60,6 +60,9 @@ object OfflineParser {
         """(?:whatsapp|sms|message|msg|व्हाट्सएप|व्हाट्सऐप|मैसेज|एसएमएस)(?:\s+(?:pe|par|me|mein|se|पे|पर|में|से))?""",
     )
     private val smsWords = listOf("sms", "एसएमएस")
+    private val composeWords =
+        Regex("""^(?:और|aur)\s|(?:^|\s)(?:लिखो|लिख\s+दो|लिखकर|लिख\s+के|likho|likh\s+do|likhkar|likh\s+ke)(?=\s|$)""")
+    private val spaces = Regex("""\s+""")
 
     fun parse(raw: String): AgentIntent? {
         val text = raw.trim().lowercase().map { devanagariDigits[it] ?: it }.joinToString("")
@@ -126,6 +129,12 @@ object OfflineParser {
         val after = rest.substring(verb.range.last + 1).replace(channelWords, " ").trim()
         val message = after.ifEmpty { rest.substring(0, verb.range.first).replace(channelWords, " ").trim() }
             .removePrefix("ki ").removePrefix("कि ").trim()
+            .replace(spaces, " ")
+            // The hi-IN recognizer hears "hi" as "है", which is never a message on its own.
+            .let { if (it == "है") "हाय" else it }
+        // "सुरेश को मैसेज करो और अपना इंट्रोडक्शन लिखो": an instruction to write the text, not the
+        // text itself. The backend's LLM writes it, and the confirmation shows what it wrote.
+        if (composeWords.containsMatchIn(message)) return null
         val name = target.groupValues[1].replace(channelWords, " ").trim()
         if (name.isEmpty() || message.isEmpty()) return null
         val sms = smsWords.any { it in text }

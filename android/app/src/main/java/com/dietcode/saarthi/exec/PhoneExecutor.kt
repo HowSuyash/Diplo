@@ -90,7 +90,12 @@ class PhoneExecutor(private val context: Context) {
     /** The saved contact that best matches a spoken name, in either script. */
     fun findContact(name: String): Contact? {
         if (name.isBlank() || !granted(Manifest.permission.READ_CONTACTS)) return null
-        val spoken = name.trim().lowercase()
+        // The parser can take words before the name ("मेरे दोस्त राहुल"), so drop them one by one.
+        val words = name.trim().lowercase().split(Regex("""\s+"""))
+        return words.indices.firstNotNullOfOrNull { matchContact(words.drop(it).joinToString(" ")) }
+    }
+
+    private fun matchContact(spoken: String): Contact? {
         relationGroups.firstOrNull { spoken in it }?.forEach { candidate ->
             context.contentResolver.query(
                 Phone.CONTENT_URI,

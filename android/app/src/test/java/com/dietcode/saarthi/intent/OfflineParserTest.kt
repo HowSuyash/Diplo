@@ -52,6 +52,21 @@ class OfflineParserTest {
     }
 
     @Test
+    fun askingToWriteTheMessageGoesToTheBackend() {
+        assertNull(OfflineParser.parse("व्हाट्सएप पर सुरेश को मैसेज करो और अपना इंट्रोडक्शन मैसेज में लिखो उसे"))
+        assertNull(OfflineParser.parse("Rahul ko WhatsApp karo aur birthday wish likh do"))
+        assertNull(OfflineParser.parse("अपना इंट्रोडक्शन सुयश को व्हाट्सएप पर लिखकर भेज दो"))
+        // "लिखो" as the verb itself still dictates the message.
+        assertEquals("हाय", message("आलोक को व्हाट्सएप पर है लिखो")["message"])
+    }
+
+    @Test
+    fun hiHeardAsHai() {
+        assertEquals("हाय", message("कृतिका को व्हाट्सएप पर है लिखो")["message"])
+        assertEquals("मैं घर पर है", message("मम्मी को बोलो मैं घर पर है")["message"])
+    }
+
+    @Test
     fun callIsNotAMessage() {
         val intent = OfflineParser.parse("Mummy ko call karo")!!
         assertEquals("call", intent.action)

@@ -9,6 +9,7 @@ Search and Fetch are free, so this runs without asking the user first.
 import logging
 import re
 from collections.abc import AsyncIterator
+from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -168,7 +169,9 @@ async def answer(query: str) -> AsyncIterator[dict[str, Any]]:
         yield _progress("Reading " + ", ".join(_site(h) for h in to_read))
         pages = await _fetch(tf, query, [h["url"] for h in to_read])
         yield _progress("Writing the answer")
-        spoken = _plain(await llm.chat(_ANSWER_PROMPT, _llm_input(query, hits, pages), timeout=45.0))
+        # The date, so "aaj ka match" picks today's result over an old one the pages also mention.
+        prompt = f"{_ANSWER_PROMPT}\nToday is {date.today():%d %B %Y}."
+        spoken = _plain(await llm.chat(prompt, _llm_input(query, hits, pages), timeout=45.0))
     if not spoken:
         # Answer in the question's language when one of the top snippets is in it.
         in_lang = [h for h in with_snippet if (lang == "hi") == bool(_DEVANAGARI.search(h["snippet"]))]

@@ -16,6 +16,8 @@ MOCK_SEARCH = not TINYFISH_API_KEY
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2:3b")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+# Only for reasoning models (e.g. Groq's openai/gpt-oss-120b): low | medium | high. Empty = not sent.
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "")
 # Let the LLM write web answers from the fetched pages. Off by default: in testing a small local
 # model (llama3.2:3b) invented facts, e.g. the wrong temperature. Turn on with a strong model.
 ANSWER_WITH_LLM = os.getenv("ANSWER_WITH_LLM", "0") == "1"

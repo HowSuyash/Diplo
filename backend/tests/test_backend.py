@@ -10,9 +10,9 @@ import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import ask, main  # noqa: E402
-from app.intent import apply_policy, match_rules  # noqa: E402
+from app.intent import _with_history, apply_policy, match_rules  # noqa: E402
 from app.main import app  # noqa: E402
-from app.schemas import WebRunRequest  # noqa: E402
+from app.schemas import Intent, Turn, WebRunRequest  # noqa: E402
 
 client = TestClient(app)
 
@@ -39,6 +39,11 @@ def test_pnr_needs_ten_digits():
     assert match_rules("PNR 123 456 7890 ka status").params["pnr"] == "1234567890"
 
 
+def test_train_ticket_means_pnr():
+    assert match_rules("मेरी ट्रेन टिकट का स्टेटस बताओ").params["flow"] == "pnr_status"
+    assert match_rules("train ticket status 1234567890").params["pnr"] == "1234567890"
+
+
 def test_web_intent_always_confirms():
     body = client.post("/intent", json={"text": "scholarship status 20261234"}).json()
     assert body["needs_confirmation"] is True
@@ -46,6 +51,29 @@ def test_web_intent_always_confirms():
 
 def test_unknown_text_without_llm():
     assert client.post("/intent", json={"text": "kuch bhi"}).json()["kind"] == "unknown"
+
+
+def test_invented_phone_actions_are_refused():
+    # llama3.2:3b answered "एक जोक सुनाओ" with a phone action "speak" the app can't run.
+    intent = apply_policy(Intent(kind="phone", action="speak", speak="क्या तुम्हें यह जोक पसंद आया?"))
+    assert intent.kind == "unknown"
+    assert apply_policy(Intent(kind="phone", action="set_alarm", params={"hour": "6", "minute": "0"})).kind == "phone"
+
+
+def test_history_reaches_the_model_as_context():
+    history = [Turn(user="अपना इंट्रोडक्शन लिखो", saarthi="मैं सारथी हूँ।")]
+    prompt = _with_history("यह मैसेज सुयश को भेजो", history)
+    assert prompt.startswith("Earlier in this conversation:\nUser: अपना इंट्रोडक्शन लिखो\nSaarthi: मैं सारथी हूँ।")
+    assert prompt.endswith("The user now says: यह मैसेज सुयश को भेजो")
+    assert _with_history("नमस्ते", []) == "नमस्ते"
+    body = {"text": "kuch bhi", "history": [{"user": "a", "saarthi": "b"}]}
+    assert client.post("/intent", json=body).status_code == 200
+
+
+def test_chat_replies_carry_no_action():
+    intent = apply_policy(Intent(kind="chat", action="joke", params={"x": "y"}, speak="एक मज़ेदार चुटकुला।"))
+    assert intent == Intent(kind="chat", speak="एक मज़ेदार चुटकुला।")
+    assert apply_policy(Intent(kind="chat")).kind == "unknown"
 
 
 def test_questions_become_web_searches_without_confirmation():

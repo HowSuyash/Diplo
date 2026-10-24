@@ -12,6 +12,7 @@ import okhttp3.Response
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -43,14 +44,17 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
     private val streaming = http.newBuilder().readTimeout(0, TimeUnit.SECONDS).build()
     private val json = "application/json; charset=utf-8".toMediaType()
 
-    suspend fun parseIntent(text: String): AgentIntent = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("text", text).toString().toRequestBody(json)
-        val request = Request.Builder().url("$baseUrl/intent").post(body).build()
-        http.newCall(request).execute().use { resp ->
-            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
-            AgentIntent.fromJson(JSONObject(resp.body?.string().orEmpty()))
+    /** [history] is the last few (user said, Saarthi said) pairs, oldest first. */
+    suspend fun parseIntent(text: String, history: List<Pair<String, String>> = emptyList()): AgentIntent =
+        withContext(Dispatchers.IO) {
+            val turns = history.map { (user, saarthi) -> JSONObject().put("user", user).put("saarthi", saarthi) }
+            val body = JSONObject().put("text", text).put("history", JSONArray(turns)).toString().toRequestBody(json)
+            val request = Request.Builder().url("$baseUrl/intent").post(body).build()
+            http.newCall(request).execute().use { resp ->
+                if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+                AgentIntent.fromJson(JSONObject(resp.body?.string().orEmpty()))
+            }
         }
-    }
 
     /** Streams a web flow. [onUpdate] runs on an OkHttp thread; cancel the returned source to stop. */
     fun runWebTask(flow: String, params: Map<String, String>, onUpdate: (WebEvent) -> Unit): EventSource {
