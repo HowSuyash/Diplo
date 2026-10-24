@@ -38,6 +38,29 @@ class AppTaskRulesTest {
         assertEquals("एबीईएस कॉलेज", task("रैपीडो से एबीईएस कॉलेज के लिए बाइक बुक करो")["destination"])
         assertEquals(true, AppTaskRules.parse("uber se cp jana hai")!!.needsConfirmation)
         assertEquals("cp", task("uber se cp jana hai")["destination"])
+        assertEquals("कनॉट प्लेस", task("बुक ए उबर टू कनॉट प्लेस")["destination"])
+    }
+
+    @Test
+    fun aRideWithoutAPlaceAsksWhereTo() {
+        // On the phone, "बुक ए उबर राइड फॉर मी" opened Uber with nowhere to go, and the model closed it.
+        for (text in listOf("बुक ए उबर राइड फॉर मी", "book an uber ride for me", "rapido bike book karo")) {
+            val asked = AppTaskRules.parse(text)!!
+            assertEquals(text, AgentIntent.Kind.CLARIFY, asked.kind)
+            assertEquals("कहां जाना है?", asked.speak)
+        }
+        val asked = AppTaskRules.parse("rapido bike book karo")!!
+        val ride = AppTaskRules.destinationAnswer(asked, "abes engineering college jana hai")!!
+        assertEquals(
+            mapOf(
+                "app" to "Rapido", "goal" to "Book a bike to abes engineering college",
+                "destination" to "abes engineering college", "mode" to "bike",
+            ),
+            ride.params,
+        )
+        assertEquals(true, ride.needsConfirmation)
+        assertEquals("Rapido से abes engineering college के लिए बाइक बुक करूं?", ride.speak)
+        assertEquals("कनॉट प्लेस", AppTaskRules.destinationAnswer(asked, "मुझे कनॉट प्लेस जाना है")!!.params["destination"])
     }
 
     @Test

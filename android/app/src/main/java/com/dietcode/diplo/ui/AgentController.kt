@@ -90,6 +90,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
 
     private var pending: AgentIntent? = null // waiting for "haan" / "nahi"
     private var clarifyContext: String? = null // earlier words when we asked a follow-up
+    private var clarifyAsked: AgentIntent? = null // and the follow-up itself
     private var webRun: EventSource? = null
     private var runIntent: AgentIntent? = null // what the running web or phone task is doing
 
@@ -131,6 +132,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         runIntent = null
         pending = null
         clarifyContext = null
+        clarifyAsked = null
         turnText = null
         speech.cancel()
         speaker.stop()
@@ -175,13 +177,27 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             return
         }
 
-        val fullText = clarifyContext?.takeIf { answersQuestion(text) }?.let { "$it $text" } ?: text
+        // A new command while a task is still working: the user has moved on, so that task stops
+        // (two at once had a second Uber task pressing Back on Diplo's own screen).
+        appTask?.let {
+            it.cancel()
+            appTask = null
+            stopNotification.hide()
+        }
+        // A place can take more words than an ID: "abes engineering college ghaziabad jana hai".
+        val forPlace = clarifyAsked?.params?.get("ask") == "destination" && text.trim().split(Regex("""\s+""")).size <= 8
+        val answering = clarifyContext != null && (answersQuestion(text) || forPlace)
+        val fullText = clarifyContext?.takeIf { answering }?.let { "$it $text" } ?: text
+        val asked = clarifyAsked?.takeIf { answering }
         clarifyContext = null
+        clarifyAsked = null
         turnText = fullText
         heard = text
         state = UiState.Thinking(text)
         scope.launch {
-            val intent = (if (BuildConfig.CLOUD_MODE) understandInCloud(fullText) else understandOnPhone(fullText))
+            // "कहां जाना है?" -> "connaught place": the answer is the ride's destination.
+            val intent = asked?.takeIf { it.params["ask"] == "destination" }?.let { AppTaskRules.destinationAnswer(it, text) }
+                ?: (if (BuildConfig.CLOUD_MODE) understandInCloud(fullText) else understandOnPhone(fullText))
                 ?: return@launch
             Log.i(TAG, "heard \"$fullText\" -> ${intent.kind} ${intent.action} ${intent.params}")
             handle(fullText, intent)
@@ -216,6 +232,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         when {
             intent.kind == AgentIntent.Kind.CLARIFY -> {
                 clarifyContext = heard
+                clarifyAsked = intent
                 remember(intent.speak) // the answer may come as a new sentence: "उसको इंट्रो लिखकर भेज दो"
                 state = UiState.Thinking(heard)
                 speaker.say(intent.speak) { startListening() }
@@ -274,6 +291,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         state = UiState.Working()
         speaker.say("ठीक है, कर रहा हूं।")
         stopNotification.show(heard)
+        appTask?.cancel() // one task at a time
         appTask = scope.launch {
             val outcome = agent.run(intent.params) { step ->
                 Log.i(TAG, "agent: $step")
@@ -387,6 +405,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         speech.cancel() // never listen while speaking: the mic would hear Diplo
         // A follow-up question that ended (e.g. nothing heard) must not glue onto the next command.
         clarifyContext = null
+        clarifyAsked = null
         if (failed) turnText = null else remember(text)
         state = UiState.Done(text, failed)
         speaker.say(text)

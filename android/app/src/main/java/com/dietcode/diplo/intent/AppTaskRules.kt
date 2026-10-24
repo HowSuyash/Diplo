@@ -24,6 +24,13 @@ object AppTaskRules {
     // "rapido se ABES college ke liye …" / "uber से कनॉट प्लेस तक …" / "book an uber to connaught place"
     private val destinationHindi = Regex("""(?:\bse\b|से|\bpe\b|पे|\bpar\b|पर)\s+(.+?)\s+(?:ke liye|के लिए|\btak\b|तक|\bjana\b|जाना|\bchalo\b|चलो)""")
     private val destinationEnglish = Regex("""\b(?:to|till|for)\s+(.+?)(?:\s+(?:on|with|via|using|in)\s+\S+)?\s*$""")
+    // The recognizer writes spoken English in Devanagari: "बुक ए उबर टू कनॉट प्लेस".
+    private val destinationSpoken = Regex("""(?:टू|फॉर)\s+(.+?)\s*$""")
+    // "book an uber ride for me" names no place.
+    private val notPlaces = setOf("me", "us", "mujhe", "hum", "मी", "मुझे", "हम", "अस")
+    private val placeFillers = Regex(
+        """(?<![\p{L}\p{M}])(mujhe|मुझे|jana hai|jaana hai|jana he|जाना है|tak|तक|chalo|चलो|please|प्लीज|ko|को)(?![\p{L}\p{M}])""",
+    )
 
     private val darkMode = Regex("""dark (mode|theme)|डार्क (मोड|थीम)""")
     private val off = Regex("""\b(off|band|disable)\b|बंद|ऑफ""")
@@ -71,13 +78,19 @@ object AppTaskRules {
 
         val cab = cabApps.firstOrNull { (_, names) -> names.any { has(text, it) } }?.first
         if (cab != null && rideWords.containsMatchIn(text)) {
-            val destination = (destinationHindi.find(text) ?: destinationEnglish.find(text))?.groupValues?.get(1)
-                ?.let(::withoutCabWords)?.trim()
+            val destination = (destinationHindi.find(text) ?: destinationEnglish.find(text) ?: destinationSpoken.find(text))
+                ?.groupValues?.get(1)?.let(::withoutCabWords)?.trim()?.takeUnless { it.isEmpty() || it in notPlaces }
             val mode = modes.firstOrNull { (_, words) -> words.any { has(text, it) } }?.first ?: "ride"
-            val params = mutableMapOf("app" to cab, "goal" to "Book a $mode${destination?.let { " to $it" } ?: ""}")
-            destination?.takeIf { it.isNotEmpty() }?.let { params["destination"] = it }
-            if (mode != "ride") params["mode"] = mode
-            return task(params)
+            // Without a destination the cab app can't be driven anywhere (the model pressed Back
+            // and closed Uber), so ask for it; AgentController hands the answer to destinationAnswer.
+            if (destination == null) {
+                return AgentIntent(
+                    AgentIntent.Kind.CLARIFY,
+                    params = mapOf("ask" to "destination", "app" to cab, "mode" to mode),
+                    speak = "कहां जाना है?",
+                )
+            }
+            return ride(cab, mode, destination)
         }
 
         searchIn.find(text)?.let { match ->
@@ -92,6 +105,22 @@ object AppTaskRules {
         }
 
         return pageOfApp(text)
+    }
+
+    /** The answer to "कहां जाना है?" ("connaught place jana hai") as the ride it completes. */
+    fun destinationAnswer(asked: AgentIntent, answer: String): AgentIntent? {
+        val app = asked.params["app"] ?: return null
+        val place = answer.trim().lowercase().replace(placeFillers, " ").replace(Regex("""\s+"""), " ").trim()
+        if (place.isEmpty()) return null
+        return ride(app, asked.params["mode"] ?: "ride", place)
+    }
+
+    private fun ride(app: String, mode: String, destination: String): AgentIntent {
+        val params = mutableMapOf("app" to app, "goal" to "Book a $mode to $destination", "destination" to destination)
+        if (mode != "ride") params["mode"] = mode
+        // The "haan" question names what gets booked, not just the words heard.
+        val what = mapOf("bike" to "बाइक", "auto" to "ऑटो", "cab" to "कैब")[mode] ?: "राइड"
+        return task(params).copy(speak = "$app से $destination के लिए $what बुक करूं?")
     }
 
     private fun pageOfApp(text: String): AgentIntent? {

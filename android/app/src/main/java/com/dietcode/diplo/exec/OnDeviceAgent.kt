@@ -69,6 +69,8 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         for (step in 1..MAX_STEPS) {
             // A locked phone shows only its lock screen: nothing in the app can be reached.
             if (locked()) return LOCKED
+            // The app closed, or the user went back to Diplo: never tap on whatever is in front now.
+            if (left(service)) return LEFT
             val elements = service.elements()
             // Two moves in a row that changed nothing: the loop is going nowhere, so stop.
             val seen = elements.map { it.seen }
@@ -179,6 +181,9 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
                     onStep("नीचे देखा")
                 }
                 AgentStep.Back -> {
+                    // Before any move this is the app's first screen, and Back just closes the app
+                    // (the model closed Uber this way).
+                    if (done.isEmpty() && menus.isEmpty() && !searched) return STUCK
                     service.back()
                     done += "went back"
                     onStep("पीछे गया")
@@ -201,6 +206,16 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
     }
 
     private fun locked() = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    private val launcher: String? by lazy {
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        context.packageManager.resolveActivity(home, 0)?.activityInfo?.packageName
+    }
+
+    private fun left(service: DiploAccessibilityService): Boolean {
+        val front = service.activePackage() ?: return false
+        return front == context.packageName || front == launcher
+    }
 
     private enum class Opened { ON_SCREEN, AT_START }
 
@@ -264,6 +279,7 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val DONE = "हो गया।"
         private val STUCK = Outcome("यहां मैं आगे नहीं बढ़ पाया। बाकी आप कर लीजिए।", ok = false)
         private val LOCKED = Outcome("फ़ोन लॉक है। अनलॉक करके फिर से बोलिए।", ok = false)
+        private val LEFT = Outcome("ऐप बंद हो गया, इसलिए काम रोक दिया।", ok = false)
         private val BOOKED = Outcome("बुकिंग का बटन दबा दिया। आगे की जानकारी ऐप में देखिए।", ok = true)
         // Paying is always the user's own tap: UPI Lite pays small amounts without a PIN.
         private val PAYMENT = Outcome("पेमेंट की स्क्रीन आ गई है। आखिरी बटन आप खुद दबाइए।", ok = true)
