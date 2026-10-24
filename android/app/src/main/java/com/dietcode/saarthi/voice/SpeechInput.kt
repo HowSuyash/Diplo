@@ -55,6 +55,7 @@ class SpeechInput(
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
         }
+        recognizer.cancel() // end any session still open, so this one is the only one
         recognizer.startListening(intent)
     }
 

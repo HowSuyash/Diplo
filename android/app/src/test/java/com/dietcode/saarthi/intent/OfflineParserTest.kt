@@ -135,6 +135,58 @@ class OfflineParserTest {
         assertNull(OfflineParser.parse("इंटरनेट पर पीएम किसान के बारे में खोजो"))
     }
 
+    private fun setting(text: String): String {
+        val intent = OfflineParser.parse(text)!!
+        assertEquals(text, "set_setting", intent.action)
+        return "${intent.params["setting"]}=${intent.params["value"]}"
+    }
+
+    @Test
+    fun settingsFromVagueHindi() {
+        assertEquals("brightness=auto", setting("ब्राइटनेस बहुत है यार कुछ कर कि अपने आप ठीक रहे"))
+        assertEquals("brightness=down", setting("ब्राइटनेस बहुत है"))
+        assertEquals("brightness=up", setting("ब्राइटनेस बहुत कम है"))
+        assertEquals("brightness=max", setting("brightness full kar do"))
+        assertEquals("brightness=max", setting("ब्राइटनेस बहुत कम है इसको बढ़ा दे फूल पर करते"))
+        assertEquals("volume=up", setting("आवाज़ बढ़ाओ"))
+        assertEquals("volume=up", setting("आवाज़ बढ़ाओ"))
+        assertEquals("volume=up", setting("आवाज़ बढ़ाओ"))
+        assertEquals("volume=down", setting("आवाज़ कम करो"))
+        assertEquals("volume=mute", setting("volume mute karo"))
+        assertEquals("torch=on", setting("टॉर्च जला दो"))
+        assertEquals("torch=off", setting("टॉर्च बंद करो"))
+        assertEquals("dnd=on", setting("मुझे डिस्टर्ब मत करो"))
+        assertEquals("silent=on", setting("फोन साइलेंट कर दो"))
+        assertEquals("font_size=up", setting("अक्षर बहुत छोटे हैं"))
+        assertEquals("wifi=off", setting("वाईफाई बंद करो"))
+        // No clear value: the backend's model decides.
+        assertNull(OfflineParser.parse("ब्राइटनेस ठीक करो"))
+    }
+
+    @Test
+    fun saveAndDeleteContactsAlwaysAsk() {
+        for (text in listOf("राहुल का नंबर 98765 43210 सेव करो", "९८७६५४३२१० को राहुल नाम से सेव करो")) {
+            val save = OfflineParser.parse(text)!!
+            assertEquals(text, "save_contact", save.action)
+            assertEquals(text, mapOf("name" to "राहुल", "number" to "9876543210"), save.params)
+            assertEquals(true, save.needsConfirmation)
+        }
+        val delete = OfflineParser.parse("राहुल का कॉन्टैक्ट डिलीट कर दो")!!
+        assertEquals("delete_contact", delete.action)
+        assertEquals("राहुल", delete.params["contact"])
+        assertEquals(true, delete.needsConfirmation)
+        assertEquals("delete_contact", OfflineParser.parse("राहुल का नंबर हटा दो")!!.action)
+    }
+
+    @Test
+    fun stopOnlyWhenItIsTheWholeCommand() {
+        assertEquals(true, OfflineParser.isStop("रुको"))
+        assertEquals(true, OfflineParser.isStop("अरे बंद करो"))
+        assertEquals(true, OfflineParser.isStop("stop it"))
+        assertEquals(false, OfflineParser.isStop("टॉर्च बंद करो"))
+        assertEquals(false, OfflineParser.isStop("वाईफाई बंद कर दो"))
+    }
+
     @Test
     fun readScreen() {
         assertEquals("read_screen", OfflineParser.parse("Screen pe kya likha hai padho")!!.action)

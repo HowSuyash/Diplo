@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 # Actions that always need a spoken "haan" first, whatever the parser said.
 # web_search is not here: it only reads public pages through free TinyFish Search and Fetch.
-SENSITIVE_ACTIONS = {"call", "send_message", "web_task"}
+SENSITIVE_ACTIONS = {"call", "send_message", "save_contact", "delete_contact", "web_task"}
 
 # Used when the model leaves "speak" empty (small models often do).
 _DEFAULT_SPEAK = {
@@ -25,6 +25,9 @@ _DEFAULT_SPEAK = {
     "set_alarm": "{hour} बजकर {minute} मिनट का अलार्म लगा रहा हूं।",
     "read_screen": "स्क्रीन पढ़ रहा हूं।",
     "open_app": "{app} खोल रहा हूं।",
+    "set_setting": "ठीक है।",
+    "save_contact": "{name}, नंबर {number}, कॉन्टैक्ट में सेव करूं?",
+    "delete_contact": "{contact} का कॉन्टैक्ट डिलीट करूं? यह वापस नहीं आएगा।",
 }
 
 _DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
@@ -126,6 +129,13 @@ Phone actions and params:
 - read_screen: {}
 - open_app: {"app": the app's name as the phone shows it, in English letters, e.g. "YouTube",
   "query": optional, what to play or search for inside it ("सिद्धू मूसे वाला के गाने")}
+- set_setting: {"setting": "brightness"|"volume"|"torch"|"dnd"|"silent"|"font_size"|"wifi"|
+  "bluetooth"|"mobile_data"|"location", "value": "up"|"down"|"auto"|"on"|"off"|"max"|"min"|"mute"}.
+  Vague complaints map to the fix: "brightness bahut hai, kuch kar ki apne aap theek rahe" ->
+  brightness auto; "aankhon mein chubh raha hai" -> brightness down; "kuch sunai nahi deta" ->
+  volume up; "akshar chhote hain, padh nahi pata" -> font_size up; "meeting mein hoon" -> dnd on.
+- save_contact: {"name": as the user wants it saved, "number": digits only}
+- delete_contact: {"contact": name as spoken}
 Web actions:
 - web_task: {"flow": one of %s, plus that flow's fields}
 - web_search: {"query": the question} for any other question about facts: government schemes,

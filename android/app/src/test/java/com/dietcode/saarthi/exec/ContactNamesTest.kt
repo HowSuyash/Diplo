@@ -12,7 +12,8 @@ class ContactNamesTest {
             "राहुल" to "Rahul", "सुयश" to "Suyash", "पीयूष" to "Piyush", "आभास" to "Aabhas",
             "संजय" to "Sanjay", "विक्की" to "Vicky", "मम्मी" to "Mummy", "द्विवेदी" to "Dwivedi",
             "शुक्ला" to "Shukla", "तिवारी" to "Tiwari", "अंकित" to "Ankit", "हर्ष" to "Harsh",
-            "ईशान" to "Ishaan", "नेहा" to "Neha", "फ़ैज़" to "Faiz",
+            "ईशान" to "Ishaan", "नेहा" to "Neha", "फ़ैज़" to "Faiz", "कृतिका" to "Cryteaca💗",
+            "आर्यन" to "Aryan", "श्रेया" to "Shreya",
         )
         for ((spoken, saved) in pairs) assertEquals("$spoken vs $saved", 0, ContactNames.extraWords(spoken, saved))
     }

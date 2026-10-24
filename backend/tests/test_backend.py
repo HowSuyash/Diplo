@@ -70,6 +70,15 @@ def test_history_reaches_the_model_as_context():
     assert client.post("/intent", json=body).status_code == 200
 
 
+def test_contact_edits_always_ask_first():
+    save = apply_policy(Intent(kind="phone", action="save_contact", params={"name": "राहुल", "number": "9876543210"}))
+    assert save.needs_confirmation is True
+    assert save.speak == "राहुल, नंबर 9876543210, कॉन्टैक्ट में सेव करूं?"
+    delete = apply_policy(Intent(kind="phone", action="delete_contact", params={"contact": "राहुल"}))
+    assert delete.needs_confirmation is True
+    assert "वापस नहीं आएगा" in delete.speak
+
+
 def test_chat_replies_carry_no_action():
     intent = apply_policy(Intent(kind="chat", action="joke", params={"x": "y"}, speak="एक मज़ेदार चुटकुला।"))
     assert intent == Intent(kind="chat", speak="एक मज़ेदार चुटकुला।")

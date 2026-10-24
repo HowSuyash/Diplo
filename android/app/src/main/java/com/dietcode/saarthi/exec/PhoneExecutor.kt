@@ -3,14 +3,22 @@ package com.dietcode.saarthi.exec
 import android.Manifest
 import android.app.SearchManager
 import android.content.ActivityNotFoundException
+import android.content.ContentProviderOperation
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.OperationApplicationException
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.RemoteException
 import android.provider.AlarmClock
+import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.CommonDataKinds.StructuredName
+import android.provider.ContactsContract.Data
+import android.provider.ContactsContract.RawContacts
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -21,20 +29,28 @@ class PhoneExecutor(private val context: Context) {
 
     data class Contact(val name: String, val number: String)
 
+    private val settings = PhoneSettings(context)
+
     /** Returns what Saarthi should say about the result. */
     fun execute(intent: AgentIntent): String {
         val p = intent.params
         return when (intent.action) {
-            "call", "send_message" -> {
+            "call", "send_message", "delete_contact" -> {
                 // AgentController resolves the contact before asking, so the question names who it is.
                 val spoken = p["contact"].orEmpty()
                 val contact = p["number"]?.let { Contact(spoken, it) } ?: findContact(spoken)
                     ?: return "${spoken.replaceFirstChar(Char::titlecase)} का नंबर नहीं मिला।"
-                if (intent.action == "call") call(contact) else sendMessage(contact, p["message"].orEmpty(), p["channel"] ?: "whatsapp")
+                when (intent.action) {
+                    "call" -> call(contact)
+                    "send_message" -> sendMessage(contact, p["message"].orEmpty(), p["channel"] ?: "whatsapp")
+                    else -> deleteContact(contact)
+                }
             }
+            "save_contact" -> saveContact(p["name"].orEmpty(), p["number"].orEmpty())
             "set_alarm" -> setAlarm(p["hour"]?.toIntOrNull(), p["minute"]?.toIntOrNull() ?: 0, p["label"].orEmpty())
             "read_screen" -> readScreen()
             "open_app" -> openApp(p["app"].orEmpty(), p["query"].orEmpty())
+            "set_setting" -> settings.apply(p["setting"].orEmpty(), p["value"].orEmpty())
             else -> "यह काम मैं अभी नहीं कर सकता।"
         }
     }
@@ -99,6 +115,54 @@ class PhoneExecutor(private val context: Context) {
         }
         val open = pm.getLaunchIntentForPackage(pkg) ?: return "$label नहीं खुला।"
         return if (start(open)) "$label खोल रहा हूं।" else "$label नहीं खुला।"
+    }
+
+    /** A new phone-only contact (no Google account), so it shows up at once. */
+    private fun saveContact(name: String, number: String): String {
+        val digits = number.filter { it.isDigit() || it == '+' }
+        if (name.isBlank() || digits.count(Char::isDigit) < 10) return "नाम और दस अंकों का नंबर, दोनों बोलिए।"
+        if (!granted(Manifest.permission.WRITE_CONTACTS)) return "कॉन्टैक्ट सेव करने की अनुमति नहीं है।"
+        val ops = arrayListOf(
+            ContentProviderOperation.newInsert(RawContacts.CONTENT_URI)
+                .withValue(RawContacts.ACCOUNT_TYPE, null)
+                .withValue(RawContacts.ACCOUNT_NAME, null)
+                .build(),
+            ContentProviderOperation.newInsert(Data.CONTENT_URI)
+                .withValueBackReference(Data.RAW_CONTACT_ID, 0)
+                .withValue(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE)
+                .withValue(StructuredName.DISPLAY_NAME, name)
+                .build(),
+            ContentProviderOperation.newInsert(Data.CONTENT_URI)
+                .withValueBackReference(Data.RAW_CONTACT_ID, 0)
+                .withValue(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE)
+                .withValue(Phone.NUMBER, digits)
+                .withValue(Phone.TYPE, Phone.TYPE_MOBILE)
+                .build(),
+        )
+        return try {
+            context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+            "$name का नंबर सेव कर दिया।"
+        } catch (e: OperationApplicationException) {
+            "कॉन्टैक्ट सेव नहीं हो पाया।"
+        } catch (e: RemoteException) {
+            "कॉन्टैक्ट सेव नहीं हो पाया।"
+        }
+    }
+
+    /** Deletes the whole contact, so a synced Google contact goes too. Only after "haan". */
+    private fun deleteContact(contact: Contact): String {
+        if (!granted(Manifest.permission.WRITE_CONTACTS)) return "कॉन्टैक्ट डिलीट करने की अनुमति नहीं है।"
+        val resolver = context.contentResolver
+        val id = resolver.query(
+            Phone.CONTENT_URI,
+            arrayOf(Phone.CONTACT_ID),
+            "${Phone.DISPLAY_NAME} = ? AND ${Phone.NUMBER} = ?",
+            arrayOf(contact.name, contact.number),
+            null,
+        )?.use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
+            ?: return "${contact.name} का कॉन्टैक्ट नहीं मिला।"
+        val deleted = resolver.delete(ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, id), null, null)
+        return if (deleted > 0) "${contact.name} का कॉन्टैक्ट डिलीट कर दिया।" else "कॉन्टैक्ट डिलीट नहीं हो पाया।"
     }
 
     private fun readScreen(): String {

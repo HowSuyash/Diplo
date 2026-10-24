@@ -60,9 +60,9 @@ Response (`Intent`):
 | Field | Values |
 |---|---|
 | `kind` | `phone`, `web`, `chat`, `clarify`, `unknown` |
-| `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `open_app`, `web_task`, `web_search`, `none` |
-| `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `open_app`: `app` (as spoken or as the phone shows it; the app matches it to launcher labels). `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
-| `needs_confirmation` | set by the backend safety policy, not by the model. Always `true` for `call`, `send_message`, `web_task`. `false` for `web_search`: it only reads public pages |
+| `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `open_app`, `set_setting`, `save_contact`, `delete_contact`, `web_task`, `web_search`, `none` |
+| `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `open_app`: `app` (as spoken or as the phone shows it; the app matches it to launcher labels), optional `query` to play or search inside it. `set_setting`: `setting` (`brightness`, `volume`, `torch`, `dnd`, `silent`, `font_size`, `wifi`, `bluetooth`, `mobile_data`, `location`) and `value` (`up`, `down`, `auto`, `on`, `off`, `max`, `min`, `mute`). `save_contact`: `name`, `number` (digits). `delete_contact`: `contact`. `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
+| `needs_confirmation` | set by the backend safety policy, not by the model. Always `true` for `call`, `send_message`, `save_contact`, `delete_contact`, `web_task` (the app also asks for the phone ones whatever the reply says). `false` for `web_search`: it only reads public pages |
 | `speak` | what the app says next, in Hindi (Devanagari reads best with the hi-IN TTS voice) |
 
 **Clarify loop:** when `kind` is `clarify`, the app speaks `speak`, listens again, and sends

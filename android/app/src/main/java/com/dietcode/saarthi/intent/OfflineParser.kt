@@ -36,6 +36,57 @@ object OfflineParser {
             """lagao|laga\s+do|chalao|chala\s+do|bajao|baja\s+do|sunao|play\s+karo)$""",
     )
 
+    // Settings by name, and complaints about them: "brightness bahut hai, apne aap theek rahe" -> auto.
+    private val settingWords = listOf(
+        "brightness" to listOf("ब्राइटनेस", "brightness", "रोशनी", "roshni"),
+        "torch" to listOf("टॉर्च", "टोर्च", "torch", "फ्लैशलाइट", "flashlight", "flash light"),
+        "dnd" to listOf("डू नॉट डिस्टर्ब", "do not disturb", "dnd", "डिस्टर्ब", "disturb"),
+        "silent" to listOf("साइलेंट", "silent", "वाइब्रेट", "vibrate"),
+        "volume" to listOf("वॉल्यूम", "volume", "आवाज़", "आवाज", "awaaz", "awaz", "साउंड", "sound"),
+        "font_size" to listOf("फ़ॉन्ट", "फॉन्ट", "font", "अक्षर", "akshar", "text size", "लिखावट"),
+        "wifi" to listOf("वाईफाई", "वाई-फाई", "वाई फाई", "wifi", "wi-fi", "wi fi"),
+        "bluetooth" to listOf("ब्लूटूथ", "bluetooth"),
+        "mobile_data" to listOf("मोबाइल डेटा", "mobile data"),
+        "location" to listOf("लोकेशन", "location", "जीपीएस", "gps"),
+    )
+    // Checked in order, so a complaint ("कम है": too low, turn it up) wins over the word in it ("कम").
+    private val settingValues = listOf(
+        "auto" to listOf("अपने आप", "apne aap", "ऑटो", "auto", "खुद से", "khud se"),
+        // The recognizer often writes "full" as "फूल" (flower).
+        "max" to listOf("फुल", "फूल", "full", "सबसे ज़्यादा", "सबसे ज्यादा", "maximum", "max", "पूरी"),
+        "min" to listOf("सबसे कम", "minimum"),
+        "mute" to listOf("म्यूट", "mute"),
+        "up" to listOf(
+            "कम है", "kam hai", "छोटे हैं", "chhote hain", "छोटा है", "chhota hai", "दिखाई नहीं", "dikhai nahi",
+            "सुनाई नहीं", "sunai nahi", "अंधेरा", "andhera",
+        ),
+        "down" to listOf(
+            "बहुत है", "bahut hai", "ज़्यादा है", "ज्यादा है", "zyada hai", "तेज़ है", "तेज है", "tez hai",
+            "चुभ", "chubh", "बड़े हैं", "bade hain",
+        ),
+        "off" to listOf("बंद", "band", "ऑफ", "off", "बुझा", "bujha", "हटाओ", "hatao"),
+        "on" to listOf("चालू", "chalu", "ऑन", "on", "जला", "jala"),
+        "down" to listOf(
+            "कम", "kam", "घटा", "ghata", "धीमा", "धीमी", "dheema", "dheemi", "छोटा", "छोटे", "chhota", "chhote",
+            "decrease", "lower",
+        ),
+        "up" to listOf(
+            "बढ़ा", "badha", "ज़्यादा", "ज्यादा", "zyada", "तेज़", "तेज", "tez", "बड़ा", "बड़े", "bada", "bade",
+            "increase", "louder",
+        ),
+    )
+    // Said with no value: "मुझे डिस्टर्ब मत करो", "फ़ोन साइलेंट कर दो", "टॉर्च".
+    private val settingDefaults = mapOf("dnd" to "on", "silent" to "on", "torch" to "on")
+
+    // "राहुल का नंबर 98765 43210 सेव करो" / "98765 43210 को राहुल नाम से सेव करो"; the backend's
+    // model handles other phrasings.
+    private val number = """(\+?\d[\d\s-]{8,}\d)"""
+    private val saveNameFirst = Regex("""^(.+?)\s+(?:का|ka)\s+(?:नंबर|नम्बर|number)\s+$number\s+(?:सेव|save)""")
+    private val saveNumberFirst = Regex("""^$number\s+(?:को|ko)\s+(.+?)\s+(?:नाम\s+से|naam\s+se)\s+(?:सेव|save)""")
+    // "राहुल का कॉन्टैक्ट डिलीट करो" / "राहुल का नंबर हटा दो"
+    private val deleteTarget =
+        Regex("""^(.+?)\s+(?:का|की|ka|ki)\s+(?:कॉन्टैक्ट|कांटेक्ट|contact|नंबर|नम्बर|number)\s+(?:डिलीट|delete|हटा)""")
+
     // "<name> को call करो" / "<name> ko call karo" / "call <name>"
     private val callTarget = Regex("""^(.+?)\s+(?:को|ko)\s""")
     private val callEnglish = Regex("""^call\s+(.+)$""")
@@ -86,6 +137,8 @@ object OfflineParser {
 
         parseMessage(text)?.let { return it }
 
+        parseContactEdit(text)?.let { return it }
+
         playIn.find(text)?.let { match ->
             val (app, query) = match.destructured
             return AgentIntent(
@@ -99,6 +152,8 @@ object OfflineParser {
             val app = match.groupValues[1].trim()
             return AgentIntent(AgentIntent.Kind.PHONE, "open_app", params = mapOf("app" to app), speak = "$app खोल रहा हूं।")
         }
+
+        parseSetting(text)?.let { return it }
 
         // "मुझे 6 बजे उठा देना" is an alarm too, but "phone uthao" without a time is not.
         val alarm = alarmWords.any { it in text }
@@ -124,6 +179,57 @@ object OfflineParser {
             )
         }
         return null
+    }
+
+    /** Saving or deleting a contact. Both always ask first; deleting names the saved contact. */
+    private fun parseContactEdit(text: String): AgentIntent? {
+        val save = saveNameFirst.find(text)?.destructured?.let { (name, num) -> name to num }
+            ?: saveNumberFirst.find(text)?.destructured?.let { (num, name) -> name to num }
+        if (save != null) {
+            val (name, num) = save
+            val digits = num.filter(Char::isDigit)
+            return AgentIntent(
+                AgentIntent.Kind.PHONE, "save_contact",
+                params = mapOf("name" to name.trim(), "number" to digits),
+                needsConfirmation = true,
+                // Read the number in two groups, the way people say it.
+                speak = "${name.trim()}, नंबर ${digits.chunked(5).joinToString(" ")}, कॉन्टैक्ट में सेव करूं?",
+            )
+        }
+        val name = deleteTarget.find(text)?.groupValues?.get(1)?.trim() ?: return null
+        return AgentIntent(
+            AgentIntent.Kind.PHONE, "delete_contact",
+            params = mapOf("contact" to name),
+            needsConfirmation = true,
+            speak = "$name का कॉन्टैक्ट डिलीट करूं? यह वापस नहीं आएगा।",
+        )
+    }
+
+    /** A setting with a clear value; vaguer ones ("ब्राइटनेस ठीक करो") are left to the backend's model. */
+    private fun parseSetting(text: String): AgentIntent? {
+        val setting = settingWords.firstOrNull { (_, words) -> words.any { has(text, it) } }?.first ?: return null
+        val value = settingValues.firstOrNull { (_, words) -> words.any { has(text, it) } }?.first
+            ?: settingDefaults[setting] ?: return null
+        return AgentIntent(
+            AgentIntent.Kind.PHONE, "set_setting",
+            params = mapOf("setting" to setting, "value" to value),
+            speak = "ठीक है।",
+        )
+    }
+
+    // Latin words match whole words ("on" must not match "phone"); Devanagari matches substrings.
+    private fun has(text: String, phrase: String): Boolean =
+        if (phrase.first() in 'a'..'z') Regex("""(?<![a-z])${Regex.escape(phrase)}(?![a-z])""").containsMatchIn(text)
+        else decompose(phrase) in decompose(text)
+
+    // Nukta letters come precomposed (ढ़ U+095D) or as letter + nukta; compare one form.
+    private val nuktaBase = mapOf(
+        'क़' to 'क', 'ख़' to 'ख', 'ग़' to 'ग', 'ज़' to 'ज',
+        'ड़' to 'ड', 'ढ़' to 'ढ', 'फ़' to 'फ', 'य़' to 'य',
+    )
+
+    private fun decompose(s: String) = buildString {
+        for (c in s) nuktaBase[c]?.let { append(it).append('़') } ?: append(c)
     }
 
     /** 24-hour (hour, minute) from a spoken time, or null if there is none. */
@@ -187,7 +293,16 @@ object OfflineParser {
     }
 
     // Not "बस": it also means "bus".
-    private val stopWords = listOf("stop", "ruko", "रुको", "band karo", "बंद करो")
+    private val stopWords = listOf("stop", "ruko", "रुको")
+    // Only on their own: "टॉर्च बंद करो" turns the torch off, it doesn't stop Saarthi.
+    private val stopPhrases = listOf("band karo", "band kar do", "बंद करो", "बंद कर दो")
+    private val stopFillers = setOf("सारथी", "saarthi", "अरे", "are", "please", "प्लीज", "ji", "जी")
 
-    fun isStop(raw: String): Boolean = stopWords.any { it in raw.trim().lowercase() }
+    fun isStop(raw: String): Boolean {
+        val text = raw.trim().lowercase()
+        if (stopWords.any { it in text }) return true
+        if (stopPhrases.none { it in text }) return false
+        val rest = stopPhrases.fold(text) { t, phrase -> t.replace(phrase, " ") }
+        return rest.split(Regex("""\s+""")).all { it.isEmpty() || it in stopFillers }
+    }
 }

@@ -39,6 +39,7 @@ object ContactNames {
     private const val LATIN_VOWELS = "aeiou"
     private val aspiration = Regex("([^aeiouh])h")
     private val softC = Regex("c(?=[eiy])")
+    private val vowelY = Regex("(?<=[^aeiou])y(?=[^aeiou]|$)")
     private val wordBreak = Regex("""[^\p{L}\p{M}]+""")
 
     // Said around a name but rarely saved with it: "Sharma ji", "Rahul bhai".
@@ -67,8 +68,9 @@ object ContactNames {
         s = softC.replace(s, "s").replace("c", "k") // "Lucy", "Facebook": c before e/i/y sounds like s
             .replace("sh", "s").replace("ph", "f").replace('w', 'v').replace('z', 'j').replace('q', 'k')
         s = aspiration.replace(s, "$1")
-        // A final y after a consonant is a vowel sound: "Mummy", "Vicky".
-        if (s.length > 1 && s.last() == 'y' && s[s.length - 2] !in LATIN_VOWELS) s = s.dropLast(1)
+        // A y after a consonant and before another one (or the end) is a vowel sound: "Mummy",
+        // "Vicky", "Cryteaca" (Kritika). "Aryan" and "Shreya" keep theirs.
+        s = vowelY.replace(s, "")
         val key = StringBuilder(if (s.first() in LATIN_VOWELS) "_" else "")
         for (c in s) if (c !in LATIN_VOWELS && c != key.lastOrNull()) key.append(c)
         return key.toString()
