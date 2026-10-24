@@ -19,6 +19,8 @@ class Flow:
     confirm: str
     summarize: Callable[[dict[str, Any]], str]
     output_schema: dict[str, Any] = field(default_factory=dict)
+    # What a mock run returns (MOCK_TINYFISH=1), so the demo reads right for each flow.
+    mock_result: dict[str, str] = field(default_factory=dict)
 
     def missing(self, params: dict[str, str]) -> list[str]:
         return [p for p in self.required if not params.get(p)]
@@ -66,6 +68,7 @@ FLOWS: dict[str, Flow] = {
             confirm="एप्लीकेशन आईडी {application_id} डालूं?",
             summarize=_say_status("आपकी स्कॉलरशिप का स्टेटस है:"),
             output_schema=_status_schema(),
+            mock_result={"status": "Approved", "details": "Payment in process", "needs_user_input": ""},
         ),
         Flow(
             id="pnr_status",
@@ -81,6 +84,11 @@ FLOWS: dict[str, Flow] = {
             confirm="पीएनआर {pnr} का स्टेटस देखूं?",
             summarize=_say_status("आपकी टिकट का स्टेटस है:"),
             output_schema=_status_schema(),
+            mock_result={
+                "status": "CNF B2 34",
+                "details": "12951 Mumbai Rajdhani, 24 Oct, chart not prepared",
+                "needs_user_input": "",
+            },
         ),
     ]
 }

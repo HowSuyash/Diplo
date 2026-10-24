@@ -18,9 +18,10 @@ Team **DietCode** · HackIIITD 2026 (Esya '26, IIIT Delhi) · Suyash Shukla, Suy
 ## Repo layout
 
 ```
-android/   Kotlin + Jetpack Compose app: voice I/O, offline parser, phone executor, accessibility service
-backend/   Python FastAPI: /intent (rules + LLM fallback), /web/run (TinyFish SSE), safety policy
-docs/      plan, API contract, pitch
+android/       Kotlin + Jetpack Compose app: voice I/O, offline parser, phone executor, accessibility service
+backend/       Python FastAPI: /intent (rules + LLM fallback), /web/run (TinyFish SSE), safety policy
+backend/web/   web client for phone and laptop browsers, served at /
+docs/          plan, API contract, pitch
 ```
 
 ## Run the backend
@@ -34,8 +35,11 @@ copy .env.example .env          # macOS/Linux: cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-- `http://localhost:8000/docs` gives you interactive API docs.
-- `MOCK_TINYFISH=1` (the default without a key) streams fake web runs, so the app can be built before TinyFish is set up.
+- `http://localhost:8000` opens the web client, `http://localhost:8000/docs` the API docs.
+- Put your TinyFish key (agent.tinyfish.ai/api-keys) in `.env`. Web questions then use live
+  TinyFish Search + Fetch, which are free.
+- `MOCK_TINYFISH=1` keeps portal runs (TinyFish Agent, billed per step) fake, so the app can be
+  built and demoed without spending credits. Set it to `0` for real portal runs.
 - For the LLM fallback, install [Ollama](https://ollama.com) and run `ollama pull llama3.2:3b`, or point `LLM_BASE_URL` at any OpenAI-compatible API (see `.env.example`).
 - Run the tests with `python -m pytest`.
 
@@ -44,7 +48,27 @@ Try it:
 ```bash
 curl -X POST localhost:8000/intent -H "Content-Type: application/json" -d "{\"text\": \"scholarship status 20261234\"}"
 curl -N -X POST localhost:8000/web/run -H "Content-Type: application/json" -d "{\"flow\": \"scholarship_status\", \"params\": {\"application_id\": \"20261234\"}}"
+curl -N -X POST localhost:8000/web/run -H "Content-Type: application/json" -d "{\"flow\": \"web_search\", \"params\": {\"query\": \"PM Kisan yojana kya hai\"}}"
 ```
+
+## Use it from a phone or laptop browser
+
+The backend serves a web client at `/`: speak or type, confirm with Haan/Nahi, watch TinyFish
+work step by step, hear the answer. Phone commands (call, WhatsApp, alarm) stay in the Android app.
+
+- **Laptop:** open `http://localhost:8000` in Chrome or Edge.
+- **Phone:** browsers only allow the microphone over https, so expose the backend through a tunnel:
+
+  ```bash
+  winget install Cloudflare.cloudflared               # once (macOS: brew install cloudflared)
+  cloudflared tunnel --url http://localhost:8000      # prints an https://….trycloudflare.com URL
+  ```
+
+  Open that URL on the phone (Chrome on Android, Safari on iPhone). It reconnects by itself and
+  keeps the same URL while it runs. `ssh -R 80:localhost:8000 nokey@localhost.run` needs no
+  install, but some networks reset it every few minutes, with a new URL each time. On the same Wi-Fi you can
+  also use `http://<laptop-ip>:8000`, but then only typing works. Anyone with the tunnel URL can
+  use the backend while the tunnel runs, so keep `MOCK_TINYFISH=1` while it's up.
 
 ## Run the Android app
 
@@ -66,7 +90,8 @@ speak ─► SpeechRecognizer (hi-IN) ─► OfflineParser ──miss──► b
                                          │
                      ┌───────────────────┴───────────────────┐
               PhoneExecutor                          backend /web/run ─► TinyFish Agent ─► portal
-       (call, WhatsApp, alarm, read screen)                progress + result (SSE)
+       (call, WhatsApp, alarm, read screen)                │       └─► TinyFish Search + Fetch (questions)
+                                                           progress + result (SSE)
                      └───────────────────┬───────────────────┘
                                          ▼
                                 Hindi TTS reads the result

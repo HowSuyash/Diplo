@@ -62,7 +62,7 @@ class TinyFish:
             await client.post(f"{AGENT_BASE}/runs/{run_id}/cancel", headers=self._headers)
 
     async def search(self, query: str, *, location: str = "IN", **params: Any) -> dict[str, Any]:
-        """Find the right official portal for a spoken request."""
+        """Ranked web results for a spoken question (or to find the right portal)."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(
                 SEARCH_URL, params={"query": query, "location": location, **params}, headers=self._headers
@@ -72,11 +72,12 @@ class TinyFish:
         return resp.json()
 
     async def fetch(self, urls: list[str], *, purpose: str | None = None, fmt: str = "markdown") -> dict[str, Any]:
-        """Cheap read of static pages (scheme details, notices) without a full agent run."""
+        """Free read of up to 10 pages (scheme details, notices) without a full agent run."""
         body: dict[str, Any] = {"urls": urls, "format": fmt}
         if purpose:
             body["purpose"] = purpose
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        # Fetch allows 110 s per URL behind a 120 s CDN limit; wait longer to get its timeout error.
+        async with httpx.AsyncClient(timeout=150.0) as client:
             resp = await client.post(FETCH_URL, json=body, headers=self._headers)
         if resp.status_code != 200:
             raise TinyFishError(resp.status_code, resp.text)
