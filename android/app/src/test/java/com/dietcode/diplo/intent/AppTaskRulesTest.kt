@@ -25,7 +25,10 @@ class AppTaskRulesTest {
     @Test
     fun ridesUseTheNamedCabAppAndAskFirst() {
         assertEquals(
-            mapOf("app" to "Rapido", "goal" to "Book a bike to abes engineering college", "destination" to "abes engineering college"),
+            mapOf(
+                "app" to "Rapido", "goal" to "Book a bike to abes engineering college",
+                "destination" to "abes engineering college", "mode" to "bike",
+            ),
             task("rapido se abes engineering college ke liye bike book karo"),
         )
         assertEquals(

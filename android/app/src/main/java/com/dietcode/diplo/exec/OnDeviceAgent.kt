@@ -30,11 +30,31 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         // A search the link already ran is done: the app is on its results.
         if (query.isNotEmpty() && target.isEmpty() && opened == Opened.ON_SCREEN) return Outcome(DONE, ok = true)
 
+        val destination = params["destination"].orEmpty().trim()
+        val mode = params["mode"] ?: listOf("bike", "auto", "cab").firstOrNull { it in goal.lowercase() }
+        // A ride: the Uber link already set the drop, so its recipe starts at picking the ride.
+        var ride = if (opened == Opened.ON_SCREEN) RideRecipe.Stage.MODE else RideRecipe.Stage.TYPE
+        var booked = 0
+
         val done = mutableListOf<String>()
         var searched = false
         var scrolls = 0
         for (step in 1..MAX_STEPS) {
             val elements = service.elements()
+            if (destination.isNotEmpty() && ride != RideRecipe.Stage.DONE) {
+                val move = RideRecipe.next(elements.map { it.seen }, destination, mode, ride, booked)
+                val element = move?.let { elements.getOrNull(it.n - 1) }
+                if (move != null && element != null) {
+                    if (move.text != null) service.type(element, move.text, submit = false) else service.tap(element)
+                    if (move.books) booked++
+                    ride = move.next
+                    done += move.say
+                    onStep(move.say)
+                    delay(SETTLE_MS)
+                    if (ride == RideRecipe.Stage.DONE) return BOOKED
+                    continue
+                }
+            }
             // A search with no link: type it into the app's search box, and the results are the answer.
             if (query.isNotEmpty() && target.isEmpty() && !searched) {
                 searched = true
@@ -171,6 +191,7 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val SETTLE_MS = 1200L
         private const val DONE = "हो गया।"
         private val STUCK = Outcome("यहां मैं आगे नहीं बढ़ पाया। बाकी आप कर लीजिए।", ok = false)
+        private val BOOKED = Outcome("बुकिंग का बटन दबा दिया। आगे की जानकारी ऐप में देखिए।", ok = true)
         // Paying is always the user's own tap: UPI Lite pays small amounts without a PIN.
         private val PAYMENT = Outcome("पेमेंट की स्क्रीन आ गई है। आखिरी बटन आप खुद दबाइए।", ok = true)
         private val payment = Regex("""\b(pay|payment|send money|proceed to pay)\b|भुगतान|पेमेंट""", RegexOption.IGNORE_CASE)

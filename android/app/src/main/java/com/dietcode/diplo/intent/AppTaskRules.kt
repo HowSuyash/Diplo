@@ -48,6 +48,7 @@ object AppTaskRules {
             val mode = modes.firstOrNull { (_, words) -> words.any { has(text, it) } }?.first ?: "ride"
             val params = mutableMapOf("app" to cab, "goal" to "Book a $mode${destination?.let { " to $it" } ?: ""}")
             destination?.takeIf { it.isNotEmpty() }?.let { params["destination"] = it }
+            if (mode != "ride") params["mode"] = mode
             return task(params)
         }
 
