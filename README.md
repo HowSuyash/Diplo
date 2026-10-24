@@ -74,13 +74,21 @@ work step by step, hear the answer. Phone commands (call, WhatsApp, alarm) stay 
 
 ## Run the Android app
 
-1. Open the `android/` folder in Android Studio and let Gradle sync.
-2. For a real phone, create `android/local.properties` with `saarthi.backendUrl=http://<your-laptop-LAN-IP>:8000`. Keep the phone on the same Wi-Fi or hotspot. The emulator uses `http://10.0.2.2:8000` by default.
+1. Open the `android/` folder in Android Studio (Rabbit or newer) and let Gradle sync. The build
+   uses Gradle 9.6, AGP 9.3 and Kotlin 2.4, which run on the JDK bundled with Studio. From a
+   terminal: set `JAVA_HOME` to Studio's `jbr` folder, then `gradlew assembleDebug` (unit tests:
+   `gradlew :app:testDebugUnitTest`).
+2. Point the app at the backend in `android/local.properties`. Easiest, and immune to venue Wi-Fi:
+   `saarthi.backendUrl=http://127.0.0.1:8000`, then run `adb reverse tcp:8000 tcp:8000` each time
+   the phone is plugged in over USB. Over the air, use `http://<your-laptop-LAN-IP>:8000` or a
+   tunnel URL instead. Without the setting the emulator default `http://10.0.2.2:8000` is used.
 3. Run on the phone and grant mic, phone and contacts permissions.
 4. To read the screen and tap Send, enable **Settings → Accessibility → Diplo**. On Android 13+, first go to App info → ⋮ → *Allow restricted settings*.
-5. For offline Hindi speech, download the Hindi offline speech pack in the phone's Google voice settings.
+5. For offline Hindi speech, download the Hindi offline speech pack in the phone's Google voice
+   settings. Without it Diplo falls back to online recognition, and the text box always works.
 
-> The Android code was written without an Android SDK and hasn't been compiled yet. Expect a few fixes on the first sync (task A0 in the plan).
+Tested on an Android 15 emulator: web answers, live PNR through TinyFish, alarm, call, and the
+WhatsApp confirmation. Voice input and the actual WhatsApp send need a real phone.
 
 ## How it works
 

@@ -10,32 +10,39 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.dietcode.saarthi.intent.AgentIntent
 
 /** Runs confirmed phone intents with Android Intents, falling back to accessibility taps. */
 class PhoneExecutor(private val context: Context) {
 
+    data class Contact(val name: String, val number: String)
+
     /** Returns what Saarthi should say about the result. */
     fun execute(intent: AgentIntent): String {
         val p = intent.params
         return when (intent.action) {
-            "call" -> call(p["contact"].orEmpty())
-            "send_message" -> sendMessage(p["contact"].orEmpty(), p["message"].orEmpty(), p["channel"] ?: "whatsapp")
+            "call", "send_message" -> {
+                // AgentController resolves the contact before asking, so the question names who it is.
+                val spoken = p["contact"].orEmpty()
+                val contact = p["number"]?.let { Contact(spoken, it) } ?: findContact(spoken)
+                    ?: return "${spoken.replaceFirstChar(Char::titlecase)} का नंबर नहीं मिला।"
+                if (intent.action == "call") call(contact) else sendMessage(contact, p["message"].orEmpty(), p["channel"] ?: "whatsapp")
+            }
             "set_alarm" -> setAlarm(p["hour"]?.toIntOrNull(), p["minute"]?.toIntOrNull() ?: 0, p["label"].orEmpty())
             "read_screen" -> readScreen()
             else -> "यह काम मैं अभी नहीं कर सकता।"
         }
     }
 
-    private fun call(name: String): String {
-        val number = findNumber(name) ?: return "$name का नंबर नहीं मिला।"
+    private fun call(contact: Contact): String {
         val action = if (granted(Manifest.permission.CALL_PHONE)) Intent.ACTION_CALL else Intent.ACTION_DIAL
-        return if (start(Intent(action, Uri.parse("tel:$number")))) "$name को कॉल कर रहा हूं।" else "कॉल नहीं हो पाया।"
+        return if (start(Intent(action, Uri.parse("tel:${contact.number}")))) "${contact.name} को कॉल कर रहा हूं।" else "कॉल नहीं हो पाया।"
     }
 
-    private fun sendMessage(name: String, message: String, channel: String): String {
-        val number = findNumber(name) ?: return "$name का नंबर नहीं मिला।"
+    private fun sendMessage(contact: Contact, message: String, channel: String): String {
+        val number = contact.number
         if (channel == "sms") {
             // TODO(track B): tap Send in the SMS app via accessibility, like WhatsApp below.
             start(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).putExtra("sms_body", message))
@@ -48,9 +55,11 @@ class PhoneExecutor(private val context: Context) {
         // The user already said "haan", so tap Send once WhatsApp has opened the chat.
         // TODO(track B): replace the fixed delay with a window-change event from the service.
         Handler(Looper.getMainLooper()).postDelayed({
-            SaarthiAccessibilityService.instance?.let { it.clickById("com.whatsapp:id/send") || it.clickByText("Send") }
+            val tapped = SaarthiAccessibilityService.instance
+                ?.let { it.clickById("com.whatsapp:id/send") || it.clickByText("Send") }
+            Log.i("Saarthi", "WhatsApp Send tapped: $tapped")
         }, 2500)
-        return "$name को व्हाट्सएप पर मैसेज भेज रहा हूं।"
+        return "${contact.name} को व्हाट्सएप पर मैसेज भेज रहा हूं।"
     }
 
     private fun setAlarm(hour: Int?, minute: Int, label: String): String {
@@ -72,26 +81,40 @@ class PhoneExecutor(private val context: Context) {
 
     // Spoken relation words rarely match how the contact is saved, so try the common spellings.
     private val relationGroups = listOf(
-        listOf("मम्मी", "माँ", "मां", "mummy", "mumma", "mom", "maa", "mother"),
-        listOf("पापा", "papa", "dad", "father"),
+        listOf("मम्मी", "माँ", "मां", "मॉम", "मम्मा", "अम्मी", "mummy", "mumma", "mom", "maa", "mother", "ammi", "amma"),
+        listOf("पापा", "डैड", "पिताजी", "अब्बू", "papa", "dad", "father", "pitaji", "abbu"),
         listOf("भैया", "भाई", "bhaiya", "bhai", "brother"),
         listOf("दीदी", "didi", "sister"),
     )
 
-    private fun findNumber(name: String): String? {
+    /** The saved contact that best matches a spoken name, in either script. */
+    fun findContact(name: String): Contact? {
         if (name.isBlank() || !granted(Manifest.permission.READ_CONTACTS)) return null
         val spoken = name.trim().lowercase()
-        val candidates = relationGroups.firstOrNull { spoken in it } ?: listOf(spoken)
-        for (candidate in candidates) {
+        relationGroups.firstOrNull { spoken in it }?.forEach { candidate ->
             context.contentResolver.query(
                 Phone.CONTENT_URI,
-                arrayOf(Phone.NUMBER),
+                arrayOf(Phone.DISPLAY_NAME, Phone.NUMBER),
                 "${Phone.DISPLAY_NAME} LIKE ?",
                 arrayOf("%$candidate%"),
                 null,
-            )?.use { cursor -> if (cursor.moveToFirst()) return cursor.getString(0) }
+            )?.use { cursor -> if (cursor.moveToFirst()) return Contact(cursor.getString(0), cursor.getString(1)) }
         }
-        return null
+        // Prefer the closest name: "राहुल" picks "Rahul" over "Rahul Sharma".
+        var best: Contact? = null
+        var bestExtra = Int.MAX_VALUE
+        context.contentResolver.query(Phone.CONTENT_URI, arrayOf(Phone.DISPLAY_NAME, Phone.NUMBER), null, null, null)
+            ?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val saved = cursor.getString(0) ?: continue
+                    val extra = ContactNames.extraWords(spoken, saved) ?: continue
+                    if (extra < bestExtra) {
+                        best = Contact(saved, cursor.getString(1))
+                        bestExtra = extra
+                    }
+                }
+            }
+        return best
     }
 
     private fun granted(permission: String) =

@@ -17,6 +17,9 @@ class SpeechInput(
     private val onText: (String) -> Unit,
     private val onFailure: (Int) -> Unit,
 ) {
+    private var preferOffline = true
+    private var languageTag = "hi-IN"
+
     private val recognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
         setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle?) {
@@ -24,7 +27,17 @@ class SpeechInput(
                 if (text.isNullOrBlank()) onFailure(SpeechRecognizer.ERROR_NO_MATCH) else onText(text)
             }
 
-            override fun onError(error: Int) = onFailure(error)
+            override fun onError(error: Int) {
+                // No offline Hindi pack on this phone: use the online recognizer from now on.
+                val noLanguage = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+                    error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
+                if (noLanguage && preferOffline) {
+                    preferOffline = false
+                    listen(languageTag)
+                } else {
+                    onFailure(error)
+                }
+            }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
@@ -36,10 +49,11 @@ class SpeechInput(
     }
 
     fun listen(languageTag: String = "hi-IN") {
+        this.languageTag = languageTag
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
         }
         recognizer.startListening(intent)
     }

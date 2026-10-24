@@ -10,7 +10,7 @@ data class AgentIntent(
     val needsConfirmation: Boolean = false,
     val speak: String = "",
 ) {
-    enum class Kind { PHONE, WEB, CLARIFY, UNKNOWN }
+    enum class Kind { PHONE, WEB, CHAT, CLARIFY, UNKNOWN }
 
     companion object {
         fun fromJson(json: JSONObject): AgentIntent {
