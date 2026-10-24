@@ -66,4 +66,12 @@ class OnDeviceAgentTest {
         assertEquals(false, OnDeviceAgent.wantsOn("Turn off Dark theme"))
         assertEquals(true, OnDeviceAgent.wantsOn("Turn on Dark theme"))
     }
+
+    @Test
+    fun questionsAreReadBackFromTheScreen() {
+        assertEquals(true, OnDeviceAgent.asksSomething("Open Instagram and tell me how many likes my last post has"))
+        assertEquals(true, OnDeviceAgent.asksSomething("Check the price of AirPods on Amazon"))
+        assertEquals(false, OnDeviceAgent.asksSomething("Turn on Dark theme"))
+        assertEquals(false, OnDeviceAgent.asksSomething("Search for arijit singh"))
+    }
 }

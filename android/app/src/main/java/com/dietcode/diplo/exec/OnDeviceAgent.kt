@@ -61,7 +61,7 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
                 if (search(service, elements, query)) {
                     onStep("खोजा: $query")
                     delay(SETTLE_MS)
-                    return Outcome(DONE, ok = true)
+                    return finished(service, goal)
                 }
             }
             if (target.isNotEmpty()) {
@@ -130,12 +130,21 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
                     done += "went back"
                     onStep("पीछे गया")
                 }
-                AgentStep.Done -> return Outcome(DONE, ok = true)
+                AgentStep.Done -> return finished(service, goal)
                 AgentStep.Stuck -> return STUCK
             }
             delay(SETTLE_MS)
         }
         return STUCK
+    }
+
+    // A question ("my last post's likes", "the price") is answered from the screen the task ended
+    // on, by the on-device model, so what is on the screen stays on the phone. Else just done.
+    private suspend fun finished(service: DiploAccessibilityService, goal: String): Outcome {
+        if (!asksSomething(goal)) return Outcome(DONE, ok = true)
+        delay(SETTLE_MS)
+        val reply = LocalBrain.answer(context, goal, service.readScreen(maxItems = 60))
+        return Outcome(reply ?: DONE, ok = true)
     }
 
     private enum class Opened { ON_SCREEN, AT_START }
@@ -197,6 +206,11 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private val payment = Regex("""\b(pay|payment|send money|proceed to pay)\b|भुगतान|पेमेंट""", RegexOption.IGNORE_CASE)
 
         fun isPayment(label: String) = payment.containsMatchIn(label)
+
+        /** Whether the goal wants something read back, not just done. */
+        fun asksSomething(goal: String) =
+            Regex("""\b(how many|how much|what|which|tell|check|find out|price|count)\b|\?""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(goal)
 
         /** Whether the goal turns something on ("Turn on Dark theme") or off. */
         fun wantsOn(goal: String) = !Regex("""\b(off|disable|turn off)\b|बंद""", RegexOption.IGNORE_CASE).containsMatchIn(goal)

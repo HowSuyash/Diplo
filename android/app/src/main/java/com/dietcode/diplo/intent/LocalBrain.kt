@@ -79,6 +79,25 @@ object LocalBrain {
         }
     }
 
+    /** A question answered from the [screen]'s text, on the phone; null if the model can't run. */
+    suspend fun answer(context: Context, question: String, screen: List<String>): String? = withContext(Dispatchers.Default) {
+        try {
+            start(context)
+            load()
+            val prompt = buildString {
+                appendLine("Question: $question")
+                appendLine("Screen:")
+                screen.take(ANSWER_LINES).forEach { appendLine(it) }
+                if (model.startsWith("qwen3")) append("/no_think")
+            }
+            val options = LlmOptions(model = model, maxOutputTokens = 60, temperature = 0f, systemPrompt = ANSWER_PROMPT)
+            RunAnywhere.llm.generate(prompt, options).text.replace(thinking, "").trim().ifEmpty { null }
+        } catch (e: SDKException) {
+            Log.w(TAG, "on-device answer failed: $e")
+            null
+        }
+    }
+
     /** The on-device agent's next move on this [screen]; Stuck if the model can't run. */
     suspend fun step(
         context: Context,
@@ -152,6 +171,10 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
 "rapido se abes college ke liye bike book karo" -> {"kind":"app","action":"app_task","params":{"app":"Rapido","goal":"Book a bike ride","destination":"ABES College"}}"""
 
     private const val STEP_ELEMENTS = 25
+    private const val ANSWER_LINES = 40
+
+    private const val ANSWER_PROMPT = """Answer the user's question in one short sentence of simple Hindi (Devanagari), using only
+the screen text given. Never invent numbers or names. If the screen doesn't show it, reply: स्क्रीन पर यह नहीं दिखा।"""
 
     // For OnDeviceAgent: one action per call, so a short output.
     private const val STEP_PROMPT = """You operate an Android phone for the user, one action at a time.
