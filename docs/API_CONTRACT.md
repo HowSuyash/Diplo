@@ -14,13 +14,17 @@ Base URL: `http://<laptop-ip>:8000` (emulator: `http://10.0.2.2:8000`). All bodi
   "mock_flows": ["scholarship_status"],
   "mock_search": false,
   "llm": true,
-  "flows": ["scholarship_status", "pnr_status", "web_search"]
+  "phone_agent": true,
+  "mock_artemis": false,
+  "flows": ["scholarship_status", "pnr_status", "web_search", "phone_task"]
 }
 ```
 
 `mock_tinyfish`: every portal flow (TinyFish Agent, billed per step) returns canned results.
 `mock_flows`: the portal flows that are canned right now; the others run on the real site.
 `mock_search`: `web_search` returns canned answers (only when there is no TinyFish API key).
+`phone_agent`: Google ARTEMIS is set up (`ARTEMIS_URL`), so `phone_task` exists. `mock_artemis`:
+its runs are canned.
 
 ## `GET /`
 
@@ -63,6 +67,7 @@ Response (`Intent`):
 | `action` | `call`, `send_message`, `set_alarm`, `read_screen`, `open_app`, `set_setting`, `save_contact`, `delete_contact`, `web_task`, `web_search`, `none` |
 | `params` | always strings. `call`: `contact`. `send_message`: `contact`, `message`, `channel` (`whatsapp`/`sms`). `set_alarm`: `hour` (0–23), `minute`, `label`. `open_app`: `app` (as spoken or as the phone shows it; the app matches it to launcher labels), optional `query` to play or search inside it. `set_setting`: `setting` (`brightness`, `volume`, `torch`, `dnd`, `silent`, `font_size`, `wifi`, `bluetooth`, `mobile_data`, `location`) and `value` (`up`, `down`, `auto`, `on`, `off`, `max`, `min`, `mute`). `save_contact`: `name`, `number` (digits). `delete_contact`: `contact`. `web_task`: `flow` plus that flow's fields. `web_search`: `flow` (`web_search`) and `query` |
 | `needs_confirmation` | set by the backend safety policy, not by the model. Always `true` for `call`, `send_message`, `save_contact`, `delete_contact`, `web_task` (the app also asks for the phone ones whatever the reply says). `false` for `web_search`: it only reads public pages |
+| `web_task` flows | `scholarship_status` (`application_id`), `pnr_status` (`pnr`), and `phone_task` (`goal`) while the phone agent is on |
 | `speak` | what the app says next, in Hindi (Devanagari reads best with the hi-IN TTS voice) |
 
 **Clarify loop:** when `kind` is `clarify`, the app speaks `speak`, listens again, and sends
@@ -71,6 +76,17 @@ Response (`Intent`):
 **Web questions:** general questions ("PM Kisan yojana kya hai", "आज दिल्ली का मौसम कैसा है")
 come back as `web_search` with `kind: "web"`, so the app runs them through `/web/run` like any
 other flow, without asking first.
+
+**Phone tasks done by the agent:** while the phone agent is on, phone work comes back as a
+`web_task` with `flow: "phone_task"` and an English `goal`: everything except `read_screen` by
+default (`ARTEMIS_FOR_ALL=1`: calls, messages, settings, bookings, any app), or only what no phone
+action covers with `ARTEMIS_FOR_ALL=0`. The app runs it through `/web/run` like a portal flow,
+after "haan": Google ARTEMIS on the laptop taps through the phone's apps, and the app shows its
+steps. `speak` repeats the user's own words: `"फ़ोन पर यह करूं: dark mode on karo?"`. With the
+agent off, tasks no phone action covers are `unknown`.
+
+**Order in the app:** online, every command goes to `/intent` first; offline (the backend
+unreachable), the phone's `OfflineParser`, then its on-device model.
 
 **Chat:** small talk the LLM can answer itself ("एक जोक सुनाओ", "तुम क्या कर सकते हो") comes
 back as `kind: "chat"`, `action: "none"`, with the reply in `speak`. The app just says it. Needs
@@ -107,10 +123,31 @@ cancels the TinyFish run, so it stops billing.
 Portal flow result `data`: `{ "status": "...", "details": "...", "needs_user_input": "" }`.
 If `needs_user_input` is non-empty the portal needs an OTP/captcha from the user (see PLAN.md, OTP).
 
+`phone_task` request: `{ "flow": "phone_task", "params": { "goal": "Open Settings and turn on Dark theme" } }`.
+Errors before the stream: `503` while the phone agent is off, `422` without a `goal`. `progress`
+messages name each action ("Open app", "Click"); the result is `data: { "status": "completed", "goal": "..." }`
+with `speak: "हो गया।"`. Every goal gets limits added: no payments, PINs, passwords, OTPs, security
+settings, or sends and deletes the user didn't ask for. If no phone is attached, the stream is one
+`error` that says so.
+
 `web_search` result `data`: `{ "answer": "...", "sources": [{ "title": "...", "url": "...", "site": "..." }] }`.
 `answer` (also in `speak`) is quoted from the best source page, not generated, in Hindi when
 the question was Hindi or Hinglish.
 
+## `POST /phone/answer`
+
+ARTEMIS reports only that a `phone_task` ended, not what it found. So when one succeeds, the app
+reads the screen it left (accessibility service, top to bottom) and asks what to say:
+
+```json
+{ "goal": "Open Uber and book an Uber Go to Connaught Place", "said": "uber book karo",
+  "screen": ["Uber Go ₹184", "Driver arriving in 4 min", "..."] }
+```
+
+Reply: `{ "speak": "Uber Go बुक हो गई, ड्राइवर 4 मिनट में आएगा।" }`, in the user's language, from
+the screen text only. With an empty screen or no LLM it is `"हो गया।"`.
+
 ## `GET /flows`
 
-`[{ "id": "scholarship_status", "title": "...", "required": ["application_id"] }, ..., { "id": "web_search", ... }]`
+`[{ "id": "scholarship_status", "title": "...", "required": ["application_id"] }, ..., { "id": "web_search", ... }]`,
+plus `phone_task` while the phone agent is on.

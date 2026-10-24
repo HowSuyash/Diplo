@@ -5,6 +5,8 @@ import os
 os.environ["MOCK_TINYFISH"] = "1"
 os.environ["LLM_BASE_URL"] = ""
 os.environ["TINYFISH_API_KEY"] = ""  # keep tests offline even when .env has a real key
+os.environ["ARTEMIS_URL"] = ""  # and never drive a real phone
+os.environ["MOCK_ARTEMIS"] = "0"
 
 import httpx  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -255,3 +257,207 @@ def test_flows_can_be_mocked_one_by_one(monkeypatch):
     assert main.config.mocked("scholarship_status")
     assert not main.config.mocked("pnr_status")
     assert client.get("/health").json()["mock_flows"] == ["scholarship_status"]
+
+
+def _phone_agent_on(monkeypatch, *, mock: bool):
+    monkeypatch.setattr(main.config, "MOCK_ARTEMIS", mock)
+    monkeypatch.setattr(main.config, "ARTEMIS_URL", "" if mock else "http://artemis.test")
+
+
+def _model_says(monkeypatch, reply: dict, *, offered: bool):
+    async def chat(system, user, **kwargs):
+        assert ("phone_task" in system) is offered
+        return json.dumps(reply)
+
+    monkeypatch.setattr(main.intent.llm, "chat", chat)
+
+
+def test_phone_agent_is_off_by_default():
+    assert client.get("/health").json()["phone_agent"] is False
+    assert client.post("/web/run", json={"flow": "phone_task", "params": {"goal": "x"}}).status_code == 503
+
+
+def test_other_phone_tasks_go_to_artemis_after_haan(monkeypatch):
+    _phone_agent_on(monkeypatch, mock=True)
+    goal = "Open Settings and turn on Dark theme"
+    _model_says(monkeypatch, {"kind": "phone", "action": "phone_task", "params": {"goal": goal}}, offered=True)
+    assert client.post("/intent", json={"text": "dark mode on karo"}).json() == {
+        "kind": "web",
+        "action": "web_task",
+        # The user's own words ride along, so the agent can catch a goal that got the direction wrong.
+        "params": {"flow": "phone_task", "goal": goal + ' (The user said: "dark mode on karo")'},
+        "needs_confirmation": True,
+        "speak": "फ़ोन पर यह करूं: dark mode on karo?",
+    }
+
+
+def test_phone_task_without_a_goal_gets_the_users_words(monkeypatch):
+    # gpt-oss answered "brightness kam karo" with phone_task and empty params.
+    _phone_agent_on(monkeypatch, mock=True)
+    _model_says(monkeypatch, {"kind": "phone", "action": "phone_task", "params": {}}, offered=True)
+    body = client.post("/intent", json={"text": "brightness kam karo"}).json()
+    assert body["params"]["goal"].startswith("Do this on the phone: brightness kam karo")
+    assert body["needs_confirmation"] is True
+
+
+def test_phone_tasks_are_refused_while_artemis_is_off(monkeypatch):
+    _model_says(monkeypatch, {"kind": "phone", "action": "phone_task", "params": {"goal": "Open Settings"}}, offered=False)
+    assert client.post("/intent", json={"text": "dark mode on karo"}).json()["kind"] == "unknown"
+
+
+def test_with_artemis_on_it_does_every_phone_task(monkeypatch):
+    _phone_agent_on(monkeypatch, mock=True)
+    prompt = main.intent._system_prompt()
+    assert "Open the Phone app and call Mummy" in prompt and '- call: {"contact"' not in prompt
+    monkeypatch.setattr(main.config, "ARTEMIS_FOR_ALL", False)  # the app's actions first again
+    assert '- call: {"contact"' in main.intent._system_prompt()
+
+    goal = "Open the Phone app and call Mummy"
+    monkeypatch.setattr(main.config, "ARTEMIS_FOR_ALL", True)
+    _model_says(monkeypatch, {"kind": "phone", "action": "phone_task", "params": {"goal": goal}}, offered=True)
+    body = client.post("/intent", json={"text": "mummy ko call karo"}).json()
+    assert body["params"]["goal"] == goal + ' (The user said: "mummy ko call karo")'
+    assert body["needs_confirmation"] is True
+
+
+def test_result_is_read_from_the_screen_the_agent_left(monkeypatch):
+    async def chat(system, user, **kwargs):
+        assert "Use only the screen text" in system and "Uber Go ₹184" in user
+        return "Uber Go बुक हो गई, ड्राइवर 4 मिनट में आएगा।"
+
+    monkeypatch.setattr(main.phone.llm, "chat", chat)
+    body = {"goal": "Open Uber and book an Uber Go", "said": "uber book karo",
+            "screen": ["Uber Go ₹184", "Driver arriving in 4 min", "Ramesh · DL 1C 2345"]}
+    assert client.post("/phone/answer", json=body).json() == {"speak": "Uber Go बुक हो गई, ड्राइवर 4 मिनट में आएगा।"}
+    # Nothing on the screen, or no model: just say it is done.
+    assert client.post("/phone/answer", json={**body, "screen": []}).json() == {"speak": main.phone.DONE}
+
+
+def test_mock_phone_task_streams_steps_then_done(monkeypatch):
+    _phone_agent_on(monkeypatch, mock=True)
+    monkeypatch.setattr(main.phone, "_MOCK_STEP_SECONDS", 0)
+    events = _events("phone_task", {"goal": "Open Settings and turn on Dark theme"})
+    assert [e["type"] for e in events] == ["progress", "progress", "progress", "result"]
+    assert events[-1]["speak"] == main.phone.DONE
+    assert client.get("/flows").json()[-1]["id"] == "phone_task"
+    assert client.post("/web/run", json={"flow": "phone_task", "params": {"goal": " "}}).status_code == 422
+
+
+class _FakeArtemis:
+    """An ARTEMIS task that opens an app, taps once, then ends as `final`."""
+
+    final = "completed"
+    phones = [{"serial": "abc123", "state": "device"}]
+    goals: list[str] = []
+    stopped: list[str] = []
+
+    def __init__(self, base_url: str):
+        self.polls = 0
+
+    async def devices(self):
+        return self.phones
+
+    async def submit(self, goal, *, profile="flash"):
+        self.goals.append(goal)
+        return "task-1"
+
+    async def steps(self, task_id):
+        return [("t1", "open_app"), ("t2", "click")][: self.polls + 1]
+
+    async def status(self, task_id):
+        self.polls += 1
+        return self.final if self.polls >= 2 else "running"
+
+    async def stop(self, task_id):
+        self.stopped.append(task_id)
+
+
+def _fake_artemis(monkeypatch, final: str) -> type[_FakeArtemis]:
+    class Fake(_FakeArtemis):
+        pass
+
+    Fake.final, Fake.goals, Fake.stopped = final, [], []
+    _phone_agent_on(monkeypatch, mock=False)
+    monkeypatch.setattr(main.phone, "Artemis", Fake)
+    monkeypatch.setattr(main.phone, "_POLL_SECONDS", 0)
+    return Fake
+
+
+def test_artemis_task_streams_each_action(monkeypatch):
+    fake = _fake_artemis(monkeypatch, "completed")
+    events = _events("phone_task", {"goal": "Open Settings and turn on Dark theme"})
+    assert [e.get("message") for e in events[:-1]] == ["Starting the phone agent", "Open app", "Click"]
+    assert events[-1]["type"] == "result" and events[-1]["speak"] == main.phone.DONE
+    # What the user said haan to, plus the limits: no payments, PINs or unasked sends.
+    assert fake.goals == ["Open Settings and turn on Dark theme" + main.phone.LIMITS]
+    assert fake.stopped == []
+
+
+def test_failed_artemis_task_gets_a_hindi_reply(monkeypatch):
+    fake = _fake_artemis(monkeypatch, "failed")
+    events = _events("phone_task", {"goal": "Open Settings"})
+    assert events[-1] == {"type": "error", "message": "ARTEMIS task failed", "speak": main.phone.FAILED}
+    assert fake.stopped == []  # it ended on its own
+
+
+def test_no_phone_attached_is_said_plainly(monkeypatch):
+    fake = _fake_artemis(monkeypatch, "completed")
+    fake.phones = [{"serial": "abc123", "state": "unauthorized"}]
+    events = _events("phone_task", {"goal": "Open Settings"})
+    assert events[-1] == {"type": "error", "message": "no phone connected to ARTEMIS", "speak": main.phone.NOT_CONNECTED}
+    assert fake.goals == []  # nothing was queued
+
+
+def test_task_that_never_starts_is_stopped(monkeypatch):
+    # Without a model API key ARTEMIS's worker dies before it records a session, so the task
+    # reads "queued" forever.
+    fake = _fake_artemis(monkeypatch, "queued")
+    monkeypatch.setattr(main.phone, "_QUEUED_SECONDS", 0)
+    events = _events("phone_task", {"goal": "Open Settings"})
+    assert events[-1] == {"type": "error", "message": "ARTEMIS task never started", "speak": main.phone.NOT_STARTED}
+    assert fake.stopped == ["task-1"]
+
+
+def test_task_with_no_new_action_is_stopped(monkeypatch):
+    # Out of model credits, ARTEMIS keeps retrying while the task reads "running".
+    fake = _fake_artemis(monkeypatch, "running")
+    fake.steps = lambda self, task_id: asyncio.sleep(0, result=[])
+    monkeypatch.setattr(main.phone, "_STALL_SECONDS", 0)
+    events = _events("phone_task", {"goal": "Open Settings"})
+    assert events[-1]["message"].startswith("ARTEMIS task stalled") and events[-1]["speak"] == main.phone.FAILED
+    assert fake.stopped == ["task-1"]
+
+
+def test_artemis_actions_are_read_from_its_trace_tree(monkeypatch):
+    # The shape of a real ARTEMIS session tree: device actions are "action" nodes among logs.
+    tree = [
+        {"type": "log", "name": "artemis.sdk.agent", "trace_id": "l1", "timestamp": 1.0, "children": []},
+        {"type": "agent", "name": "FlashRunner", "trace_id": "a0", "timestamp": 2.0, "children": [
+            {"type": "action", "name": "manage_app", "trace_id": "s1", "timestamp": 3.0, "children": [
+                {"type": "agent", "name": "hopper", "trace_id": "h1", "timestamp": 3.5, "children": []},
+            ]},
+            {"type": "log", "name": "artemis.agents.flash.runner", "trace_id": "l2", "timestamp": 4.0, "children": []},
+            {"type": "action", "name": "swipe", "trace_id": "s2", "timestamp": 5.0, "children": []},
+        ]},
+    ]
+
+    async def call(method, path, **kwargs):
+        assert path == "/api/sessions/task-9/tree"
+        return tree
+
+    agent = main.phone.Artemis("http://artemis.test")
+    monkeypatch.setattr(agent, "_call", call)
+    assert asyncio.run(agent.steps("task-9")) == [("s1", "manage_app"), ("s2", "swipe")]
+
+
+def test_hanging_up_stops_the_task_on_the_phone(monkeypatch):
+    fake = _fake_artemis(monkeypatch, "running")  # never ends by itself
+
+    async def hang_up():
+        stream = main._run_phone("Open Settings")
+        assert "Starting the phone agent" in await anext(stream)
+        assert "Open app" in await anext(stream)
+        await stream.aclose()  # "ruko": the app closes the stream
+
+    asyncio.run(hang_up())
+    assert fake.stopped == ["task-1"]

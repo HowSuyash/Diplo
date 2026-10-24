@@ -21,8 +21,8 @@ class IntentRequest(BaseModel):
 
 class Intent(BaseModel):
     kind: Kind
-    # phone: call | send_message | set_alarm | read_screen
-    # web:   web_task (params["flow"] names the flow)
+    # phone: call | send_message | set_alarm | read_screen | open_app | set_setting | save_contact | delete_contact
+    # web:   web_task (params["flow"] names the flow, phone_task included) | web_search
     # chat / clarify / unknown: none (a chat reply is just `speak`)
     action: str = "none"
     params: dict[str, str] = Field(default_factory=dict)
@@ -34,3 +34,14 @@ class Intent(BaseModel):
 class WebRunRequest(BaseModel):
     flow: str
     params: dict[str, str] = Field(default_factory=dict)
+
+
+class PhoneAnswerRequest(BaseModel):
+    goal: str
+    said: str = ""
+    # Text on the phone's screen after the task, top to bottom (DiploAccessibilityService.readScreen).
+    screen: list[str] = Field(default_factory=list, max_length=200)
+
+
+class PhoneAnswer(BaseModel):
+    speak: str

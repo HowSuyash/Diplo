@@ -8,7 +8,7 @@ import json
 import logging
 import re
 
-from . import ask, llm
+from . import ask, config, llm, phone
 from .flows import FLOWS
 from .schemas import Intent, Turn
 
@@ -83,6 +83,20 @@ def _web_intent(flow_id: str, params: dict[str, str]) -> Intent:
     )
 
 
+def phone_task_intent(goal: str, said: str) -> Intent:
+    """An ARTEMIS run on the phone. It goes through /web/run like the portal flows, so the app
+    confirms it and shows its steps the same way. The question repeats the user's own words."""
+    said = said.strip().rstrip("।.!? ")
+    # The user's own words go along, so the agent can check the goal against them: the model once
+    # wrote "Lower the screen brightness" for "ब्राइटनेस ज्यादा करो" (turn it up).
+    return Intent(
+        kind="web",
+        action="web_task",
+        params={"flow": phone.FLOW_ID, "goal": f'{goal.strip()} (The user said: "{said}")'},
+        speak=f"फ़ोन पर यह करूं: {said}?",
+    )
+
+
 def search_intent(query: str) -> Intent:
     return Intent(
         kind="web",
@@ -121,21 +135,7 @@ _SYSTEM_PROMPT = """You turn a spoken command (English, Hindi or Hinglish) into 
 {"kind": "phone"|"web"|"chat"|"clarify"|"unknown", "action": str, "params": {str: str}, "speak": str}
 
 Phone actions and params:
-- call: {"contact": name as spoken}
-- send_message: {"contact": name, "message": text in the user's language, "channel": "whatsapp"
-  unless the user says SMS, then "sms"}. If the user asks you to write the message ("अपना
-  इंट्रोडक्शन लिखो", "birthday wish likh do"), write it yourself, ready to send.
-- set_alarm: {"hour": 0-23, "minute": 0-59, "label": optional}
-- read_screen: {}
-- open_app: {"app": the app's name as the phone shows it, in English letters, e.g. "YouTube",
-  "query": optional, what to play or search for inside it ("सिद्धू मूसे वाला के गाने")}
-- set_setting: {"setting": "brightness"|"volume"|"torch"|"dnd"|"silent"|"font_size"|"wifi"|
-  "bluetooth"|"mobile_data"|"location", "value": "up"|"down"|"auto"|"on"|"off"|"max"|"min"|"mute"}.
-  Vague complaints map to the fix: "brightness bahut hai, kuch kar ki apne aap theek rahe" ->
-  brightness auto; "aankhon mein chubh raha hai" -> brightness down; "kuch sunai nahi deta" ->
-  volume up; "akshar chhote hain, padh nahi pata" -> font_size up; "meeting mein hoon" -> dnd on.
-- save_contact: {"name": as the user wants it saved, "number": digits only}
-- delete_contact: {"contact": name as spoken}
+%s
 Web actions:
 - web_task: {"flow": one of %s, plus that flow's fields}
 - web_search: {"query": the question} for any other question about facts: government schemes,
@@ -156,6 +156,60 @@ English for English. The recognizer writes English in Devanagari too ("कैन
 judge by the words, not the script.
 Reply with JSON only."""
 
+# The app's own phone actions: instant, done with Android intents.
+_PHONE_ACTIONS = """- call: {"contact": name as spoken}
+- send_message: {"contact": name, "message": text in the user's language, "channel": "whatsapp"
+  unless the user says SMS, then "sms"}. If the user asks you to write the message ("अपना
+  इंट्रोडक्शन लिखो", "birthday wish likh do"), write it yourself, ready to send.
+- set_alarm: {"hour": 0-23, "minute": 0-59, "label": optional}
+- read_screen: {}
+- open_app: {"app": the app's name as the phone shows it, in English letters, e.g. "YouTube",
+  "query": optional, what to play or search for inside it ("सिद्धू मूसे वाला के गाने")}
+- set_setting: {"setting": "brightness"|"volume"|"torch"|"dnd"|"silent"|"font_size"|"wifi"|
+  "bluetooth"|"mobile_data"|"location", "value": "up"|"down"|"auto"|"on"|"off"|"max"|"min"|"mute"}.
+  Vague complaints map to the fix: "brightness bahut hai, kuch kar ki apne aap theek rahe" ->
+  brightness auto; "aankhon mein chubh raha hai" -> brightness down; "kuch sunai nahi deta" ->
+  volume up; "akshar chhote hain, padh nahi pata" -> font_size up; "meeting mein hoon" -> dnd on.
+- save_contact: {"name": as the user wants it saved, "number": digits only}
+- delete_contact: {"contact": name as spoken}"""
+
+# With ARTEMIS on but ARTEMIS_FOR_ALL=0: the app's actions first, the agent for the rest.
+_PHONE_TASK_PROMPT = """
+- phone_task: {"goal": the task as one short English instruction for an agent that taps through
+  the phone's apps like a person, with every detail the user gave, e.g. "Open Settings and turn on
+  Dark theme", "Open Uber and book an Uber Go from my current location to Connaught Place",
+  "Open Swiggy and order one masala dosa from the nearest restaurant"}. Only when no action above
+  fits: anything else a person does on their phone, in any app, bookings and orders included. If
+  the task needs a detail the user didn't give (where to go, what to order), use kind "clarify"."""
+
+# ARTEMIS_FOR_ALL (the default with ARTEMIS on): the agent does everything on the phone, like a
+# person tapping through it; Diplo only reads the screen aloud itself.
+_AGENT_PHONE_PROMPT = """- read_screen: {} reads the screen aloud
+- phone_task: {"goal": the task as one short English instruction for an agent that taps through
+  the phone's apps like a person, with every detail the user gave}. Always fill in "goal", e.g.
+  {"kind": "phone", "action": "phone_task", "params": {"goal": "Lower the screen brightness"}}.
+  Use it for everything else
+  done on the phone, in any app: calls ("Open the Phone app and call Mummy"), WhatsApp or SMS
+  messages with the exact text ("Open WhatsApp, open the chat with Rahul and send: मैं 7 बजे
+  आऊंगा"), alarms, settings, opening apps and playing songs, contacts, bookings and orders ("Open
+  Uber and book an Uber Go from my current location to Connaught Place"). If the user asks you
+  to write the message, write it yourself into the goal. Keep the direction the user asked for:
+  "ब्राइटनेस ज्यादा करो" / "brightness badhao" -> "Raise the screen brightness", "brightness kam
+  karo" -> "Lower the screen brightness". Vague complaints mean the fix: "aankhon mein chubh raha
+  hai" -> "Lower the screen brightness", "kuch dikhai nahi deta" -> "Raise the screen brightness".
+  If the task needs a detail the user didn't give (where to go, what to order, whom to message),
+  use kind "clarify"."""
+
+
+def _system_prompt() -> str:
+    if not phone.enabled():
+        actions = _PHONE_ACTIONS
+    elif config.ARTEMIS_FOR_ALL:
+        actions = _AGENT_PHONE_PROMPT
+    else:
+        actions = _PHONE_ACTIONS + _PHONE_TASK_PROMPT
+    return _SYSTEM_PROMPT % (actions, list(FLOWS))
+
 
 def _with_history(text: str, history: list[Turn]) -> str:
     if not history:
@@ -165,7 +219,7 @@ def _with_history(text: str, history: list[Turn]) -> str:
 
 
 async def llm_parse(text: str, history: list[Turn] | None = None) -> Intent | None:
-    content = await llm.chat(_SYSTEM_PROMPT % list(FLOWS), _with_history(text, history), json_mode=True)
+    content = await llm.chat(_system_prompt(), _with_history(text, history), json_mode=True)
     if content is None:
         return None
     try:
@@ -180,6 +234,13 @@ async def llm_parse(text: str, history: list[Turn] | None = None) -> Intent | No
         # Alone, the user's own words search best and keep the answer in their language;
         # a follow-up needs the model's query, which folds in what "it" refers to.
         return search_intent((intent.params.get("query") if history else None) or text)
+    if intent.action == "phone_task":
+        if not phone.enabled():
+            return Intent(kind="unknown", speak=_CANT_DO)
+        # gpt-oss sometimes picks phone_task but leaves params empty ("brightness kam karo"). The
+        # agent's own model understands Hinglish, so it gets the user's words instead.
+        goal = intent.params.get("goal", "").strip() or f"Do this on the phone: {text}"
+        return phone_task_intent(goal, text)
     if intent.action == "web_task" and intent.params.get("flow") in FLOWS:
         # The flow's own wording: it asks for missing fields and confirms before a billed run.
         params = {k: v for k, v in intent.params.items() if k != "flow"}
@@ -205,7 +266,7 @@ def apply_policy(intent: Intent) -> Intent:
         return intent
     if intent.kind == "chat":
         return Intent(kind="chat", speak=intent.speak) if intent.speak else Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
-    if intent.action == "web_task" and intent.params.get("flow") not in FLOWS:
+    if intent.action == "web_task" and intent.params.get("flow") not in (*FLOWS, phone.FLOW_ID):
         return Intent(kind="unknown", speak=_NOT_UNDERSTOOD)
     if not intent.speak:
         template = _DEFAULT_SPEAK.get(intent.action)

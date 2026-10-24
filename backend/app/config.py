@@ -26,6 +26,16 @@ SCHOLARSHIP_PORTAL_URL = os.getenv("SCHOLARSHIP_PORTAL_URL", "https://scholarshi
 # indianrail.gov.in puts a captcha on PNR enquiry; ConfirmTkt shows the same CRIS data without one.
 PNR_PORTAL_URL = os.getenv("PNR_PORTAL_URL", "https://www.confirmtkt.com/pnr-status")
 
+# Google ARTEMIS on this laptop, for phone tasks no command covers. Empty = off.
+ARTEMIS_URL = os.getenv("ARTEMIS_URL", "").rstrip("/")
+# flash (~3-5 s per step) or pro (plans and checks its work, 15-40 s per step).
+ARTEMIS_PROFILE = os.getenv("ARTEMIS_PROFILE", "flash")
+# Canned phone-agent runs, to build the app without ARTEMIS or a phone.
+MOCK_ARTEMIS = os.getenv("MOCK_ARTEMIS", "0") == "1"
+# With ARTEMIS on: 1 = it does everything on the phone (calls, messages, settings, any app);
+# 0 = the app's instant actions first, ARTEMIS only for the rest.
+ARTEMIS_FOR_ALL = os.getenv("ARTEMIS_FOR_ALL", "1") == "1"
+
 
 def mocked(flow_id: str) -> bool:
     return MOCK_TINYFISH or flow_id in MOCK_FLOWS

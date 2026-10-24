@@ -17,9 +17,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import ask, config, intent
+from . import ask, config, intent, phone
 from .flows import FLOWS, Flow
-from .schemas import Intent, IntentRequest, WebRunRequest
+from .schemas import Intent, IntentRequest, PhoneAnswer, PhoneAnswerRequest, WebRunRequest
 from .tinyfish import TinyFish, TinyFishError
 
 log = logging.getLogger(__name__)
@@ -37,19 +37,30 @@ async def health() -> dict[str, Any]:
         "mock_flows": [f for f in FLOWS if config.mocked(f)],
         "mock_search": config.MOCK_SEARCH,
         "llm": bool(config.LLM_BASE_URL),
-        "flows": [*FLOWS, ask.FLOW_ID],
+        "phone_agent": phone.enabled(),
+        "mock_artemis": config.MOCK_ARTEMIS,
+        "flows": [f["id"] for f in await flows()],
     }
 
 
 @app.get("/flows")
 async def flows() -> list[dict[str, Any]]:
     agent_flows = [{"id": f.id, "title": f.title, "required": f.required} for f in FLOWS.values()]
-    return [*agent_flows, {"id": ask.FLOW_ID, "title": ask.TITLE, "required": ask.REQUIRED}]
+    agent_flows.append({"id": ask.FLOW_ID, "title": ask.TITLE, "required": ask.REQUIRED})
+    if phone.enabled():
+        agent_flows.append({"id": phone.FLOW_ID, "title": phone.TITLE, "required": phone.REQUIRED})
+    return agent_flows
 
 
 @app.post("/intent", response_model=Intent)
 async def parse_intent(req: IntentRequest) -> Intent:
     return await intent.parse(req.text, req.history)
+
+
+@app.post("/phone/answer", response_model=PhoneAnswer)
+async def phone_answer(req: PhoneAnswerRequest) -> PhoneAnswer:
+    """After a phone_task: the result to speak, read from the screen the agent left."""
+    return PhoneAnswer(speak=await phone.answer_from_screen(req.goal, req.said, req.screen))
 
 
 def _sse(event: dict[str, Any]) -> str:
@@ -154,6 +165,13 @@ async def _run_search(query: str) -> AsyncIterator[str]:
         yield _sse(event)
 
 
+async def _run_phone(goal: str) -> AsyncIterator[str]:
+    # aclosing: when the app hangs up, phone.run's cleanup stops the task on the phone.
+    async with aclosing(phone.run(goal)) as events:
+        async for event in events:
+            yield _HEARTBEAT if event is None else _sse(event)
+
+
 # Keep proxies and tunnels from buffering the stream.
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
@@ -164,6 +182,12 @@ async def run_web(req: WebRunRequest) -> StreamingResponse:
         if not req.params.get("query", "").strip():
             raise HTTPException(422, "missing params: ['query']")
         stream = _run_search(req.params["query"])
+    elif req.flow == phone.FLOW_ID:
+        if not phone.enabled():
+            raise HTTPException(503, "the phone agent is off: set ARTEMIS_URL (or MOCK_ARTEMIS=1)")
+        if not req.params.get("goal", "").strip():
+            raise HTTPException(422, "missing params: ['goal']")
+        stream = _run_phone(req.params["goal"].strip())
     else:
         flow = FLOWS.get(req.flow)
         if flow is None:
