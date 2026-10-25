@@ -95,7 +95,7 @@ object LocalBrain {
             start(context)
             load()
             val prompt = if (model.startsWith("qwen3")) "$request /no_think" else request
-            val options = LlmOptions(model = model, maxOutputTokens = 160, temperature = 0f, systemPrompt = PLAN_PROMPT)
+            val options = LlmOptions(model = model, maxOutputTokens = 120, temperature = 0f, repetitionPenalty = 1f, systemPrompt = PLAN_PROMPT)
             val started = System.currentTimeMillis()
             val reply = RunAnywhere.llm.generate(prompt, options)
             Log.i(TAG, "plan \"$request\" -> ${reply.text.trim()} (${System.currentTimeMillis() - started} ms)")
@@ -134,7 +134,7 @@ object LocalBrain {
                 screen.forEach { appendLine(it.line()) }
                 if (model.startsWith("qwen3")) append("/no_think")
             }
-            val options = LlmOptions(model = model, maxOutputTokens = 60, temperature = 0f, systemPrompt = ACT_PROMPT)
+            val options = LlmOptions(model = model, maxOutputTokens = 60, temperature = 0f, repetitionPenalty = 1f, systemPrompt = ACT_PROMPT)
             val started = System.currentTimeMillis()
             val reply = RunAnywhere.llm.generate(prompt, options)
             Log.i(TAG, "act for \"$goal\" -> ${reply.text.trim()} (${System.currentTimeMillis() - started} ms)")
@@ -193,15 +193,18 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
 
     // The planner and the operator of the on-device agent (OnDeviceAgent), ARTEMIS's two roles.
     // No app has a script: the examples only show the shape of a plan.
-    private const val PLAN_PROMPT = """You are Diplo, a phone assistant for Indian users. Read the user's request (Hindi, Hinglish or English) and reply with JSON only, one of:
-{"reply":"short answer in Hindi (Devanagari)"} for greetings, chat, or anything not done on the phone.
-{"ask":"question in Hindi"} when the task needs a detail the user did not give, like where to go.
-{"app":"app to open","goal":"the task in English with every detail the user gave","steps":["step", ...]} for anything done on the phone. Phone settings are in the Settings app.
-Examples:
-"namaste kaise ho" -> {"reply":"नमस्ते! मैं ठीक हूं। बताइए, क्या करूं?"}
-"ola book karo" -> {"ask":"कहां जाना है?"}
-"rapido se abes college ke liye bike book karo" -> {"app":"Rapido","goal":"Book a bike ride to ABES College","steps":["Open the destination search","Type ABES College","Pick the matching place","Choose Bike","Book the ride"]}
-"dark mode on karo" -> {"app":"Settings","goal":"Turn on Dark theme","steps":["Open Display","Turn on the Dark theme switch"]}"""
+    // A task comes first: the 1.7B model took "dark mode off karo" for chat when chat came first.
+    // Steps use a small grammar that OnDeviceAgent's skills do in any app (exec/Skills.kt).
+    private const val PLAN_PROMPT = """You are Diplo, a phone assistant. The user speaks Hindi, Hinglish or English. Reply with JSON only:
+Anything done on the phone (settings, apps, calls, messages, rides, orders): {"app":"the app the user names, else the right one","goal":"the task in English with every detail","steps":[...]}
+Steps use only: "tap <words shown on the button>", "type <text>", "search <text>", "turn on <setting>", "turn off <setting>", "scroll", "back".
+A detail the task needs is missing: {"ask":"question in Hindi"}
+Only greetings or chat: {"reply":"short answer in Hindi"}
+"dark mode off karo" -> {"app":"Settings","goal":"Turn off Dark theme","steps":["tap Display","turn off Dark theme"]}
+"cab book karo" -> {"ask":"कहां जाना है?"}
+"ola se airport ke liye auto book karo" -> {"app":"Ola","goal":"Book an auto to the airport","steps":["type airport","tap Airport","tap Auto","tap Book"]}
+"youtube pe arijit singh search karo" -> {"app":"YouTube","goal":"Search for Arijit Singh","steps":["search Arijit Singh"]}
+"namaste" -> {"reply":"नमस्ते! बताइए, क्या करूं?"}"""
 
     private const val ACT_PROMPT = """You operate an Android phone for the user, one action per turn, until the goal is reached.
 Reply with one JSON action only:

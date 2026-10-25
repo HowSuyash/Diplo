@@ -81,20 +81,107 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
             ?: return Outcome("पहले सेटिंग्स में Diplo की एक्सेसिबिलिटी चालू कीजिए।", ok = false)
         if (locked()) return LOCKED
         io.say("ठीक है, कर रहा हूं।")
-        var app = executor.launch(task.app) ?: return Outcome("${task.app} नाम का ऐप नहीं मिला।", ok = false)
+        app = executor.launch(task.app) ?: return Outcome("${task.app} नाम का ऐप नहीं मिला।", ok = false)
         io.step("$app खोला")
         settle(service, OPEN_MS)
-        return operate(service, task, app, io)
+        return follow(service, task, io)
+    }
+
+    private var app = "" // the app in front, as the task opened it
+
+    // The plan's steps, done by skills that work in any app (Skills): fast, no model. A step
+    // outside the grammar, or naming something the screen doesn't show even after a scroll, goes
+    // to the model, for that one step.
+    private suspend fun follow(service: DiploAccessibilityService, task: AgentPlan.Task, io: Io): Outcome {
+        if (task.steps.isEmpty()) return operate(service, task, io, MAX_STEPS)
+        for (raw in task.steps) {
+            if (locked()) return LOCKED
+            if (left(service)) return LEFT
+            val step = PlanStep.parse(raw)
+            // "open Uber" first: the task has opened it already.
+            if (step?.verb == PlanStep.Verb.OPEN && Skills.score(app, step.target) >= 70) continue
+            var did = step?.let { perform(service, it, io) } ?: Did.MISSED
+            if (did == Did.MISSED && step?.verb in LOOKED_FOR && service.scrollDown()) {
+                delay(SETTLE_MS)
+                did = perform(service, step!!, io)
+            }
+            when (did) {
+                Did.PAYMENT -> return PAYMENT
+                Did.MISSED -> {
+                    Log.i(TAG, "no skill for \"$raw\" on this screen: the model takes it")
+                    val outcome = operate(service, task.copy(goal = raw, steps = emptyList()), io, STEP_TRIES)
+                    if (!outcome.ok) return outcome
+                }
+                Did.OK -> delay(SETTLE_MS)
+            }
+        }
+        return Outcome(DONE, ok = true)
+    }
+
+    private enum class Did { OK, MISSED, PAYMENT }
+
+    // One step by its skill. MISSED when the screen doesn't show what it names.
+    private suspend fun perform(service: DiploAccessibilityService, step: PlanStep, io: Io): Did {
+        val elements = service.elements()
+        val seen = elements.map { it.seen }
+        fun on(found: ScreenElement?) = found?.let { f -> elements.firstOrNull { it.seen.n == f.n } }
+        when (step.verb) {
+            PlanStep.Verb.OPEN -> {
+                app = executor.launch(step.target) ?: return Did.MISSED
+                io.step("$app खोला")
+                settle(service, OPEN_MS)
+            }
+            PlanStep.Verb.TAP -> {
+                val element = on(Skills.best(seen, step.target)) ?: return Did.MISSED
+                // Paying is always the user's own tap: UPI Lite pays small amounts without a PIN.
+                if (isPayment(element.seen.label)) return Did.PAYMENT
+                service.tap(element)
+                io.step("दबाया: ${element.seen.label.take(40)}")
+            }
+            PlanStep.Verb.TYPE, PlanStep.Verb.SEARCH -> {
+                // No box yet: what opens one ("Where to?", "Search") first.
+                val input = on(Skills.input(seen)) ?: run {
+                    val opener = on(Skills.searchOpener(seen)) ?: return Did.MISSED
+                    service.tap(opener)
+                    delay(SETTLE_MS)
+                    val again = service.elements()
+                    Skills.input(again.map { it.seen })?.let { box -> again.firstOrNull { it.seen.n == box.n } }
+                } ?: return Did.MISSED
+                service.type(input, step.target, submit = step.verb == PlanStep.Verb.SEARCH)
+                io.step("लिखा: ${step.target}")
+            }
+            PlanStep.Verb.TURN_ON, PlanStep.Verb.TURN_OFF -> {
+                val wanted = step.verb == PlanStep.Verb.TURN_ON
+                val row = on(Skills.best(seen, step.target)) ?: return Did.MISSED
+                // Settings rows often carry the label and leave the switch beside it unlabelled.
+                val toggle = if (row.seen.kind == Kind.TOGGLE) row
+                else elements.drop(row.seen.n).take(3).firstOrNull { it.seen.kind == Kind.TOGGLE }
+                if (toggle != null) {
+                    if (toggle.seen.checked != wanted) service.tap(toggle)
+                } else {
+                    // A row that opens a page of its own ("Dark theme" → "Use Dark theme"): its switch.
+                    service.tap(row)
+                    delay(SETTLE_MS)
+                    val switches = service.elements().filter { it.seen.kind == Kind.TOGGLE }
+                    val switch = Skills.best(switches.map { it.seen }, step.target)?.let { s -> switches.firstOrNull { it.seen.n == s.n } }
+                        ?: switches.singleOrNull()
+                    if (switch != null && switch.seen.checked != wanted) service.tap(switch)
+                }
+                io.step("${if (wanted) "चालू" else "बंद"} किया: ${row.seen.label.take(40)}")
+            }
+            PlanStep.Verb.SCROLL -> if (!service.scrollDown()) return Did.MISSED
+            PlanStep.Verb.BACK -> service.back()
+        }
+        return Did.OK
     }
 
     // The operator: look, decide, act, until the model says done.
-    private suspend fun operate(service: DiploAccessibilityService, task: AgentPlan.Task, opened: String, io: Io): Outcome {
-        var app = opened
+    private suspend fun operate(service: DiploAccessibilityService, task: AgentPlan.Task, io: Io, maxSteps: Int): Outcome {
         val done = mutableListOf<String>()
         var before: List<ScreenElement>? = null
         var unchanged = 0
         var stuck = 0
-        for (step in 1..MAX_STEPS) {
+        for (step in 1..maxSteps) {
             // A locked phone shows only its lock screen; a closed app leaves Diplo or the home
             // screen in front. Never tap on whatever is there instead.
             if (locked()) return LOCKED
@@ -213,6 +300,8 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val TAG = "Diplo"
         private const val MAX_ASKS = 2
         private const val MAX_STEPS = 15
+        private const val STEP_TRIES = 3 // model moves for one plan step a skill couldn't do
+        private val LOOKED_FOR = setOf(PlanStep.Verb.TAP, PlanStep.Verb.TURN_ON, PlanStep.Verb.TURN_OFF)
         private const val MAX_UNCHANGED = 3
         private const val MAX_STUCK = 2
         private const val MAX_SHOWN = 30

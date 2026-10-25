@@ -284,7 +284,8 @@ object OfflineParser {
         )
     }
 
-    private val yesWords = listOf("haan", "han", "हाँ", "हां", "हा", "yes", "ok", "okay", "kar do", "कर दो", "ji", "जी")
+    // "यस", "ओके": spoken English in Devanagari, as the hi-IN recognizer writes it.
+    private val yesWords = listOf("haan", "han", "हाँ", "हां", "हा", "yes", "ok", "okay", "kar do", "कर दो", "ji", "जी", "यस", "ओके")
     private val noWords = listOf("nahi", "nahin", "नहीं", "नही", "no", "mat", "मत", "cancel", "ruko", "रुको")
 
     /** true = yes, false = no, null = unclear (ask again). Checks "no" first: "nahi haan" is a no. */

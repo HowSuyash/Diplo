@@ -15,7 +15,8 @@ val backendUrl: String = localProps.getProperty("diplo.backendUrl", "http://10.0
 // The on-device LLM (LocalBrain): any GGUF file, downloaded once while online. Keyless RunAnywhere
 // has an empty catalog, so the app registers this URL itself under the id.
 // 1.7B: the on-device agent decides every step itself, like ARTEMIS, and 0.6B was too weak for that.
-val localModel: String = localProps.getProperty("diplo.localModel", "qwen3-1.7b")
+// Q4_0, not Q4_K_M: llama.cpp has fast ARM kernels for it (Q4_K_M read prompts at 12 tokens/s).
+val localModel: String = localProps.getProperty("diplo.localModel", "qwen3-1.7b-q4_0")
 // cpu, gpu or auto (llama.cpp on the phone's GPU).
 val localAccel: String = localProps.getProperty("diplo.localAccel", "cpu")
 // Private mode (the default): understanding and phone tasks stay on the phone, and only web
@@ -24,7 +25,7 @@ val localAccel: String = localProps.getProperty("diplo.localAccel", "cpu")
 val cloudMode: Boolean = localProps.getProperty("diplo.cloud", "false").toBoolean()
 val localModelUrl: String = localProps.getProperty(
     "diplo.localModelUrl",
-    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
+    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_0.gguf",
 )
 
 android {

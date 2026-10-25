@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
 
         val savedLangCode = prefs.getString("preferred_language", "hi") ?: "hi"
         preferredLanguage = AppLanguage.entries.find { it.code == savedLangCode } ?: AppLanguage.Hindi
+        agent.languageTag = recognizerTag(preferredLanguage)
 
         // Draw under the status and navigation bars with dark icons on light warm ceramic background
         enableEdgeToEdge(
@@ -73,6 +74,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val updateLanguage: (AppLanguage) -> Unit = { newLang ->
                 preferredLanguage = newLang
+                agent.languageTag = recognizerTag(newLang)
                 prefs.edit().putString("preferred_language", newLang.code).apply()
             }
 
@@ -144,6 +146,8 @@ class MainActivity : ComponentActivity() {
     // Debug builds only, for testing from a laptop without touching the phone:
     //   adb shell am start -n com.dietcode.diplo/.MainActivity --es diplo_text "dark mode on karo"
     // ("haan" answers a question the same way).
+    private fun recognizerTag(language: AppLanguage) = if (language == AppLanguage.Hindi) "hi-IN" else "en-IN"
+
     private fun debugCommand(intent: Intent?) {
         if (!BuildConfig.DEBUG) return
         intent?.getStringExtra("diplo_text")?.let(agent::submitText)

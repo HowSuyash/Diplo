@@ -61,6 +61,12 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     var heard by mutableStateOf("")
         private set
 
+    /**
+     * The recognizer's language. en-IN for English and Hinglish: hi-IN writes spoken English in
+     * Devanagari ("बुक एन उबर राइड"), which the on-device model reads badly.
+     */
+    var languageTag = "hi-IN"
+
     private val speaker = Speaker(
         context,
         onSpeaking = { text ->
@@ -109,7 +115,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
             return
         }
         state = UiState.Listening
-        speech.listen()
+        speech.listen(languageTag)
     }
 
     /** Kill switch: the Stop button, saying "ruko", or "रोकें" in the notification. */
@@ -271,7 +277,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private fun ask(question: String) {
         Log.i(TAG, "asked: $question")
         state = UiState.Confirm(question)
-        speaker.say(question) { if (pending != null) speech.listen() }
+        speaker.say(question) { if (pending != null) speech.listen(languageTag) }
     }
 
     private fun execute(intent: AgentIntent) {
@@ -321,7 +327,7 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
         Log.i(TAG, "asked: $question")
         // A yes-or-no question keeps the Haan / Nahi buttons up.
         state = if (confirming) UiState.Confirm(question) else UiState.Listening
-        speaker.say(question) { if (agentWaiting === waiting) speech.listen() }
+        speaker.say(question) { if (agentWaiting === waiting) speech.listen(languageTag) }
         val answer = withTimeoutOrNull(ANSWER_MS) { waiting.await() }
         if (agentWaiting === waiting) agentWaiting = null
         speech.cancel()
