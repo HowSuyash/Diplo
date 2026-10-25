@@ -129,6 +129,12 @@ class OnDeviceAgent(
             // "tap Settings" inside Settings, "tap Phone" inside Phone: the app itself.
             if (step?.verb == PlanStep.Verb.TAP && Skills.score(app, step.target) >= 90) continue
             var did = step?.let { perform(service, it, io, last) } ?: Did.MISSED
+            // Not there yet: suggestions and pages load over the network, so look again a little later.
+            var waits = 0
+            while (did == Did.MISSED && step?.verb in LOOKED_FOR && waits++ < LOOK_AGAIN) {
+                delay(LOAD_MS * 2)
+                did = perform(service, step!!, io, last)
+            }
             if (did == Did.MISSED && step?.verb in LOOKED_FOR && service.scrollDown()) {
                 delay(SETTLE_MS)
                 did = perform(service, step!!, io, last)
@@ -179,13 +185,14 @@ class OnDeviceAgent(
                 io.step("दबाया: ${element.seen.label.take(40)}")
             }
             PlanStep.Verb.TYPE, PlanStep.Verb.SEARCH -> {
-                // No box yet: what opens one ("Where to?", "Search") first.
+                // No box yet: what opens one ("Where to?", "Search") first. Either way the box can
+                // take a few seconds to appear (Uber's search page slides in).
                 val input = on(Skills.input(seen)) ?: run {
-                    val opener = on(Skills.searchOpener(seen)) ?: return Did.MISSED
-                    service.tap(opener)
-                    delay(SETTLE_MS)
-                    val again = service.elements()
-                    Skills.input(again.map { it.seen })?.let { box -> again.firstOrNull { it.seen.n == box.n } }
+                    on(Skills.searchOpener(seen))?.let { opener ->
+                        service.tap(opener)
+                        io.step("दबाया: ${opener.seen.label.take(40)}")
+                    }
+                    inputSoon(service)
                 } ?: return Did.MISSED
                 service.type(input, step.target, submit = step.verb == PlanStep.Verb.SEARCH || last)
                 io.step("लिखा: ${step.target}")
@@ -216,6 +223,20 @@ class OnDeviceAgent(
             PlanStep.Verb.BACK -> service.back()
         }
         return Did.OK
+    }
+
+    // The box to type into once the page has loaded: a focused or search box at once, any other
+    // box only at the end (the pickup box appears before Uber's "Where to?").
+    private suspend fun inputSoon(service: DiploAccessibilityService): DiploAccessibilityService.Element? {
+        var any: DiploAccessibilityService.Element? = null
+        repeat(LOAD_TRIES) {
+            delay(LOAD_MS)
+            val now = service.elements()
+            val box = Skills.input(now.map { it.seen })?.let { b -> now.firstOrNull { it.seen.n == b.n } }
+            if (box != null && Skills.sure(box.seen)) return box
+            any = box ?: any
+        }
+        return any
     }
 
     // A radio stays chosen when tapped (realme's "Light mode" / "Dark mode"): turning one off means
@@ -361,6 +382,7 @@ class OnDeviceAgent(
         private const val STEP_TRIES = 3 // model moves for one plan step a skill couldn't do
         private const val RADIO_SPAN = 6 // how far apart the options of one choice can be
         private const val SAME_SETTING = 60 // "Dark theme" and "Dark mode" are one setting
+        private const val LOOK_AGAIN = 2 // second looks for what a step names before scrolling
         private val LOOKED_FOR = setOf(PlanStep.Verb.TAP, PlanStep.Verb.TURN_ON, PlanStep.Verb.TURN_OFF)
         private const val MAX_UNCHANGED = 3
         private const val MAX_STUCK = 2

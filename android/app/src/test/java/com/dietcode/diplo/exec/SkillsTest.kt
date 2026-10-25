@@ -69,6 +69,9 @@ class SkillsTest {
         val home = listOf(el(1, Kind.BUTTON, "Search with your voice"), el(2, Kind.BUTTON, "Where to?"), el(3, Kind.BUTTON, "Home"))
         assertNull(Skills.input(home))
         assertEquals(2, Skills.searchOpener(home)?.n) // not the mic
+        // Uber's home: the header frame carries the words too.
+        val uber = listOf(el(1, Kind.BUTTON, "Current location Inbox Where to?"), el(2, Kind.BUTTON, "Where to?"), el(3, Kind.TEXT, "Where to?"))
+        assertEquals(2, Skills.searchOpener(uber)?.n)
         val search = listOf(el(1, Kind.INPUT, "Pickup location"), el(2, Kind.INPUT, "Where to?"))
         assertEquals(2, Skills.input(search)?.n)
     }

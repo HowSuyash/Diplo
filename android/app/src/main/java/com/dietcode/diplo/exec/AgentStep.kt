@@ -4,7 +4,13 @@ import org.json.JSONException
 import org.json.JSONObject
 
 /** A screen element as the on-device agent's model sees it: plain text, no Android types. */
-data class ScreenElement(val n: Int, val kind: Kind, val label: String, val checked: Boolean? = null) {
+data class ScreenElement(
+    val n: Int,
+    val kind: Kind,
+    val label: String,
+    val checked: Boolean? = null,
+    val focused: Boolean = false, // the box the cursor is in
+) {
     enum class Kind { BUTTON, INPUT, TOGGLE, LIST, TEXT }
 
     /** How it is shown to the model: `[3] toggle: Dark theme (off)`. */

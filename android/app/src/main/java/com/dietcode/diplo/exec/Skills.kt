@@ -79,12 +79,22 @@ object Skills {
     }
 
     /** The box to type into: an input, preferring one that looks like a search. */
+    // The one with the cursor first, as a person types there: Uber's search page focuses "Where to?",
+    // and its pickup box comes first on the screen.
     fun input(elements: List<ScreenElement>): ScreenElement? =
-        elements.filter { it.kind == Kind.INPUT }.let { inputs -> inputs.firstOrNull { searchLike.containsMatchIn(it.label) } ?: inputs.firstOrNull() }
+        elements.filter { it.kind == Kind.INPUT }.let { inputs ->
+            inputs.firstOrNull { it.focused } ?: inputs.firstOrNull { searchLike.containsMatchIn(it.label) } ?: inputs.firstOrNull()
+        }
+
+    /** Whether [box] is surely the one to type into, not just the first box on a page still loading. */
+    fun sure(box: ScreenElement) = box.focused || searchLike.containsMatchIn(box.label)
 
     /** What opens a search box when there is none yet ("Where to?", "Search"), never the mic. */
+    // The shortest such label: a frame around the whole header ("Current location Inbox Where to?")
+    // also contains the words, and tapping it opens nothing.
     fun searchOpener(elements: List<ScreenElement>): ScreenElement? =
-        elements.firstOrNull { it.kind != Kind.INPUT && searchLike.containsMatchIn(it.label) && !voice.containsMatchIn(it.label) }
+        elements.filter { it.kind != Kind.INPUT && searchLike.containsMatchIn(it.label) && !voice.containsMatchIn(it.label) }
+            .minWithOrNull(compareBy<ScreenElement> { if (it.kind == Kind.TEXT) 1 else 0 }.thenBy { it.label.length })
 
     private val voice = Regex("""\b(voice|mic|camera|image|lens|photo)\b""", RegexOption.IGNORE_CASE)
 

@@ -1,7 +1,10 @@
 package com.dietcode.diplo.exec
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
@@ -74,7 +77,7 @@ class DiploAccessibilityService : AccessibilityService() {
                 }
                 if (label.isNotEmpty() || kind != ScreenElement.Kind.TEXT) {
                     val checked = if (node.isCheckable) node.isChecked else null
-                    out += Element(ScreenElement(out.size + 1, kind, label, checked), node)
+                    out += Element(ScreenElement(out.size + 1, kind, label, checked, focused = node.isFocused), node)
                 }
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
@@ -87,14 +90,27 @@ class DiploAccessibilityService : AccessibilityService() {
     private fun innerText(node: AccessibilityNodeInfo, depth: Int = 0): String {
         if (depth > INNER_DEPTH) return ""
         return (0 until node.childCount).mapNotNull { node.getChild(it) }
-            .filter { it.isVisibleToUser && !it.isPassword }
+            // Not an input: Uber's box frame read "India Gate Clear location text" and was taken
+            // for the "India Gate" suggestion.
+            .filter { it.isVisibleToUser && !it.isPassword && !it.isEditable }
             .joinToString(" ") { child ->
                 (child.text ?: child.contentDescription)?.toString()?.trim().orEmpty().ifEmpty { innerText(child, depth + 1) }
             }
             .replace(Regex("""\s+"""), " ").trim()
     }
 
-    fun tap(element: Element): Boolean = clickNearest(element.node)
+    // A finger's tap where the element is, as a person (or ARTEMIS over adb) taps: Uber's "Where
+    // to?" ignores an accessibility click but not a touch. The click is the fallback.
+    fun tap(element: Element): Boolean = touch(element.node) || clickNearest(element.node)
+
+    private fun touch(node: AccessibilityNodeInfo): Boolean {
+        val box = Rect()
+        node.getBoundsInScreen(box)
+        if (box.isEmpty || !node.isVisibleToUser) return false
+        val path = Path().apply { moveTo(box.exactCenterX(), box.exactCenterY()) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, TAP_MS)
+        return dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
 
     /** Types into an input, replacing what is there; [submit] then presses the keyboard's search/enter. */
     fun type(element: Element, text: String, submit: Boolean = true): Boolean {
@@ -148,5 +164,6 @@ class DiploAccessibilityService : AccessibilityService() {
             private set
 
         private const val INNER_DEPTH = 3
+        private const val TAP_MS = 60L
     }
 }
