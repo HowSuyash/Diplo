@@ -1,5 +1,6 @@
 package com.dietcode.diplo.net
 
+import android.os.Build
 import com.dietcode.diplo.BuildConfig
 import com.dietcode.diplo.intent.AgentIntent
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +75,24 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
             }
         }
 
+    /**
+     * The on-device agent's plan, as JSON, made by the backend's model from the user's words only:
+     * the screen never leaves the phone. Throws IOException when the backend can't plan.
+     */
+    suspend fun plan(text: String): String = withContext(Dispatchers.IO) {
+        // Only the words and the kind of phone: its labels differ by maker ("Light mode" on realme).
+        val device = "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}"
+        val body = JSONObject().put("text", text).put("device", device).toString().toRequestBody(json)
+        val request = Request.Builder().url("$baseUrl/plan").post(body).build()
+        planHttp.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+            resp.body?.string().orEmpty()
+        }
+    }
+
+    // A plan is quick or not worth waiting for: the phone's own model plans instead.
+    private val planHttp = http.newBuilder().callTimeout(PLAN_SECONDS, TimeUnit.SECONDS).build()
+
     /** Streams a web flow. [onUpdate] runs on an OkHttp thread; cancel the returned source to stop. */
     fun runWebTask(flow: String, params: Map<String, String>, onUpdate: (WebEvent) -> Unit): EventSource {
         val body = JSONObject().put("flow", flow).put("params", JSONObject(params)).toString().toRequestBody(json)
@@ -87,5 +106,9 @@ class BackendClient(private val baseUrl: String = BuildConfig.BACKEND_URL) {
                 onUpdate(WebEvent.Error(t?.message ?: "HTTP ${response?.code}", "वेब एजेंट से कनेक्शन टूट गया।"))
             }
         })
+    }
+
+    private companion object {
+        const val PLAN_SECONDS = 8L
     }
 }

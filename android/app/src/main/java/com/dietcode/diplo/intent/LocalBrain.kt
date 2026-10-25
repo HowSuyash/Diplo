@@ -195,15 +195,14 @@ Small talk: kind "chat", a short reply in Hindi (Devanagari) in "speak". Else ki
     // No app has a script: the examples only show the shape of a plan.
     // A task comes first: the 1.7B model took "dark mode off karo" for chat when chat came first.
     // Steps use a small grammar that OnDeviceAgent's skills do in any app (exec/Skills.kt).
-    private const val PLAN_PROMPT = """You are Diplo, a phone assistant. The user speaks Hindi, Hinglish or English. Reply with JSON only:
-Anything done on the phone (settings, apps, calls, messages, rides, orders): {"app":"the app the user names, else the right one","goal":"the task in English with every detail","steps":[...]}
-Steps use only: "tap <words shown on the button>", "type <text>", "search <text>", "turn on <setting>", "turn off <setting>", "scroll", "back".
-A detail the task needs is missing: {"ask":"question in Hindi"}
-Only greetings or chat: {"reply":"short answer in Hindi"}
+    // Short: every prompt token costs ~0.07 s on a phone CPU.
+    private const val PLAN_PROMPT = """Phone assistant. User speaks Hindi, Hinglish or English. JSON only.
+Phone task: {"app":"app the user names","goal":"task in English","steps":[...]}, steps only "tap <text on screen>", "type <text>", "search <text>", "turn on <setting>", "turn off <setting>", "scroll", "back".
+Missing detail: {"ask":"Hindi question"}. Greeting or chat: {"reply":"short Hindi"}.
 "dark mode off karo" -> {"app":"Settings","goal":"Turn off Dark theme","steps":["tap Display","turn off Dark theme"]}
 "cab book karo" -> {"ask":"कहां जाना है?"}
 "ola se airport ke liye auto book karo" -> {"app":"Ola","goal":"Book an auto to the airport","steps":["type airport","tap Airport","tap Auto","tap Book"]}
-"youtube pe arijit singh search karo" -> {"app":"YouTube","goal":"Search for Arijit Singh","steps":["search Arijit Singh"]}
+"youtube pe arijit singh search karo" -> {"app":"YouTube","goal":"Search Arijit Singh","steps":["search Arijit Singh"]}
 "namaste" -> {"reply":"नमस्ते! बताइए, क्या करूं?"}"""
 
     private const val ACT_PROMPT = """You operate an Android phone for the user, one action per turn, until the goal is reached.
@@ -221,7 +220,7 @@ Follow the plan and use the numbers shown. If your last action changed nothing, 
 
     // Tasks that act for the user ask "haan" first; looking at or changing a setting doesn't.
     private val risky = Regex(
-        """\b(book|order|send|call|pay|buy|delete|post|request|transfer|share|upload|message|reply)\b""",
+        """\b(book|order|send|call|pay|buy|delete|post|request|transfer|share|upload|message|reply|confirm|checkout|place order)\b""",
         RegexOption.IGNORE_CASE,
     )
 

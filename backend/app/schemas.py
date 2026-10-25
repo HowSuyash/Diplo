@@ -45,3 +45,10 @@ class PhoneAnswerRequest(BaseModel):
 
 class PhoneAnswer(BaseModel):
     speak: str
+
+
+class PlanRequest(BaseModel):
+    # Only the user's words: the screen never leaves the phone.
+    text: str = Field(min_length=1, max_length=500)
+    # Make, model and Android version ("realme RMX3869, Android 16"): labels differ by phone.
+    device: str = Field(default="", max_length=100)

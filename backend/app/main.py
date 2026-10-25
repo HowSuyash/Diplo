@@ -17,9 +17,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import ask, config, intent, phone
+from . import ask, config, intent, phone, plan
 from .flows import FLOWS, Flow
-from .schemas import Intent, IntentRequest, PhoneAnswer, PhoneAnswerRequest, WebRunRequest
+from .schemas import Intent, IntentRequest, PhoneAnswer, PhoneAnswerRequest, PlanRequest, WebRunRequest
 from .tinyfish import TinyFish, TinyFishError
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,15 @@ async def flows() -> list[dict[str, Any]]:
 @app.post("/intent", response_model=Intent)
 async def parse_intent(req: IntentRequest) -> Intent:
     return await intent.parse(req.text, req.history)
+
+
+@app.post("/plan")
+async def plan_task(req: PlanRequest) -> dict[str, Any]:
+    """The on-device agent's plan for the user's words; the phone does the steps itself."""
+    result = await plan.plan(req.text, req.device)
+    if result is None:
+        raise HTTPException(status_code=503, detail="planner unavailable")
+    return result
 
 
 @app.post("/phone/stop")

@@ -50,7 +50,8 @@ object Skills {
      */
     fun best(elements: List<ScreenElement>, target: String): ScreenElement? =
         elements.filter { it.kind != Kind.LIST && it.kind != Kind.INPUT && it.label.isNotBlank() }
-            .map { it to score(it.label, target) }
+            // "Choose / Confirm / Book": the planner's alternatives when it can't know the exact words.
+            .map { element -> element to target.split(" / ", " or ").maxOf { score(element.label, it.trim()) } }
             .filter { (_, score) -> score >= MIN_SCORE }
             // The best score; among equals a button over a text ("Choose Uber Go AC" over the heading
             // "Choose a trip"), then the shortest label ("Display" over a long description).

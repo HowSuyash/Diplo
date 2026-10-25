@@ -8,6 +8,7 @@ import android.util.Log
 import com.dietcode.diplo.exec.ScreenElement.Kind
 import com.dietcode.diplo.intent.LocalBrain
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 /**
  * Does anything a user does on the phone, the way Google ARTEMIS does it, but on the phone
@@ -19,7 +20,15 @@ import kotlinx.coroutines.delay
  * starts, a Pay button is never tapped, password fields are never read, and the task stops when
  * the phone locks, the app closes, or the user says something new.
  */
-class OnDeviceAgent(private val context: Context, private val executor: PhoneExecutor) {
+class OnDeviceAgent(
+    private val context: Context,
+    private val executor: PhoneExecutor,
+    /**
+     * The backend's planner, given only the user's words (never the screen); null or a null
+     * result plans with the phone's own model instead, which is slower.
+     */
+    private val cloudPlan: (suspend (String) -> String?)? = null,
+) {
 
     data class Outcome(val speak: String, val ok: Boolean)
 
@@ -53,12 +62,17 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
     }
 
     private suspend fun work(request: String, io: Io): Outcome {
-        io.step("सोच रहा हूं")
+        // A request done before needs no model: its plan is remembered.
+        val remembered = memory.recall(request)
+        var task: AgentPlan.Task? = remembered
+        if (task == null) io.step("सोच रहा हूं") else io.step("यह पहले किया है")
         // The planner answers, asks for what is missing ("कहां जाना है?"), or plans a task.
         var asked = request
-        var task: AgentPlan.Task? = null
         for (round in 0..MAX_ASKS) {
-            when (val plan = LocalBrain.plan(context, asked) ?: return NOT_UNDERSTOOD) {
+            if (task != null) break
+            val planned = cloudPlan?.invoke(asked)?.let(AgentPlan::parse)?.also { Log.i(TAG, "plan from the backend: $it") }
+                ?: LocalBrain.plan(context, asked)
+            when (val plan = planned ?: return NOT_UNDERSTOOD) {
                 is AgentPlan.Reply -> return Outcome(plan.say, ok = true)
                 is AgentPlan.Ask -> {
                     if (round == MAX_ASKS) return NOT_UNDERSTOOD
@@ -74,7 +88,9 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         task ?: return NOT_UNDERSTOOD
 
         // Acting for the user asks "haan" first, naming exactly the goal that will run.
-        if (LocalBrain.actsForUser(task.goal) && !io.confirm("फ़ोन पर यह करूं: ${task.goal}?")) {
+        // The steps count too: a planner once wrote the goal "India Gate jana hai" with "tap Confirm".
+        val acts = LocalBrain.actsForUser(task.goal) || task.steps.any(LocalBrain::actsForUser)
+        if (acts && !io.confirm("फ़ोन पर यह करूं: ${task.goal}?")) {
             return Outcome("ठीक है, नहीं किया।", ok = true)
         }
         val service = DiploAccessibilityService.instance
@@ -84,8 +100,17 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         app = executor.launch(task.app) ?: return Outcome("${task.app} नाम का ऐप नहीं मिला।", ok = false)
         io.step("$app खोला")
         settle(service, OPEN_MS)
-        return follow(service, task, io)
+        val outcome = follow(service, task, io)
+        // Kept only if it worked, and only for the request alone: after "कहां जाना है?" the plan
+        // holds that answer, which another time will differ.
+        when {
+            outcome.ok && asked == request -> memory.keep(request, task)
+            !outcome.ok && remembered != null -> memory.forget(request)
+        }
+        return outcome
     }
+
+    private val memory = PlanMemory(context)
 
     private var app = "" // the app in front, as the task opened it
 
@@ -94,16 +119,19 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
     // to the model, for that one step.
     private suspend fun follow(service: DiploAccessibilityService, task: AgentPlan.Task, io: Io): Outcome {
         if (task.steps.isEmpty()) return operate(service, task, io, MAX_STEPS)
-        for (raw in task.steps) {
+        for ((i, raw) in task.steps.withIndex()) {
+            val last = i == task.steps.lastIndex
             if (locked()) return LOCKED
             if (left(service)) return LEFT
-            val step = PlanStep.parse(raw)
+            val step = PlanStep.parse(raw)?.let { onOrOff(task.goal, it) }
             // "open Uber" first: the task has opened it already.
             if (step?.verb == PlanStep.Verb.OPEN && Skills.score(app, step.target) >= 70) continue
-            var did = step?.let { perform(service, it, io) } ?: Did.MISSED
+            // "tap Settings" inside Settings, "tap Phone" inside Phone: the app itself.
+            if (step?.verb == PlanStep.Verb.TAP && Skills.score(app, step.target) >= 90) continue
+            var did = step?.let { perform(service, it, io, last) } ?: Did.MISSED
             if (did == Did.MISSED && step?.verb in LOOKED_FOR && service.scrollDown()) {
                 delay(SETTLE_MS)
-                did = perform(service, step!!, io)
+                did = perform(service, step!!, io, last)
             }
             when (did) {
                 Did.PAYMENT -> return PAYMENT
@@ -120,8 +148,20 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
 
     private enum class Did { OK, MISSED, PAYMENT }
 
+    // "Turn off Dark mode" planned as "tap Dark theme" would flip it whichever way it is: the goal
+    // says which way, so that tap is a turn off.
+    private fun onOrOff(goal: String, step: PlanStep): PlanStep {
+        if (step.verb != PlanStep.Verb.TAP) return step
+        val switch = Regex("""^turn (on|off) (.+)$""", RegexOption.IGNORE_CASE).find(goal.trim()) ?: return step
+        val (way, setting) = switch.destructured
+        if (Skills.score(step.target, setting) < SAME_SETTING) return step
+        return PlanStep(if (way.equals("on", ignoreCase = true)) PlanStep.Verb.TURN_ON else PlanStep.Verb.TURN_OFF, step.target)
+    }
+
     // One step by its skill. MISSED when the screen doesn't show what it names.
-    private suspend fun perform(service: DiploAccessibilityService, step: PlanStep, io: Io): Did {
+    // [last]: text typed as the plan's last step is sent too ("type Arijit Singh" in YouTube);
+    // before another step it is not, so that step can pick a suggestion.
+    private suspend fun perform(service: DiploAccessibilityService, step: PlanStep, io: Io, last: Boolean): Did {
         val elements = service.elements()
         val seen = elements.map { it.seen }
         fun on(found: ScreenElement?) = found?.let { f -> elements.firstOrNull { it.seen.n == f.n } }
@@ -147,7 +187,7 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
                     val again = service.elements()
                     Skills.input(again.map { it.seen })?.let { box -> again.firstOrNull { it.seen.n == box.n } }
                 } ?: return Did.MISSED
-                service.type(input, step.target, submit = step.verb == PlanStep.Verb.SEARCH)
+                service.type(input, step.target, submit = step.verb == PlanStep.Verb.SEARCH || last)
                 io.step("लिखा: ${step.target}")
             }
             PlanStep.Verb.TURN_ON, PlanStep.Verb.TURN_OFF -> {
@@ -157,7 +197,10 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
                 val toggle = if (row.seen.kind == Kind.TOGGLE) row
                 else elements.drop(row.seen.n).take(3).firstOrNull { it.seen.kind == Kind.TOGGLE }
                 if (toggle != null) {
-                    if (toggle.seen.checked != wanted) service.tap(toggle)
+                    if (toggle.seen.checked != wanted) {
+                        service.tap(toggle)
+                        if (!wanted) chooseOther(service, toggle)
+                    }
                 } else {
                     // A row that opens a page of its own ("Dark theme" → "Use Dark theme"): its switch.
                     service.tap(row)
@@ -173,6 +216,18 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
             PlanStep.Verb.BACK -> service.back()
         }
         return Did.OK
+    }
+
+    // A radio stays chosen when tapped (realme's "Light mode" / "Dark mode"): turning one off means
+    // choosing the option next to it.
+    private suspend fun chooseOther(service: DiploAccessibilityService, radio: DiploAccessibilityService.Element) {
+        delay(SETTLE_MS)
+        val now = service.elements()
+        val still = now.firstOrNull { it.seen.kind == Kind.TOGGLE && it.seen.label == radio.seen.label && it.seen.checked == true }
+            ?: return
+        now.filter { it.seen.kind == Kind.TOGGLE && it.seen.checked == false && abs(it.seen.n - still.seen.n) <= RADIO_SPAN }
+            .minByOrNull { abs(it.seen.n - still.seen.n) }
+            ?.let(service::tap)
     }
 
     // The operator: look, decide, act, until the model says done.
@@ -281,7 +336,10 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
     // After opening an app: at least [ms], longer while a cold start still shows a blank splash.
     private suspend fun settle(service: DiploAccessibilityService, ms: Long) {
         delay(ms)
-        repeat(LOAD_TRIES) { if (service.elements().size < MIN_ELEMENTS) delay(LOAD_MS) }
+        // A cold start (YouTube) can leave Diplo in front for a few seconds more.
+        repeat(LOAD_TRIES) {
+            if (service.activePackage() == context.packageName || service.elements().size < MIN_ELEMENTS) delay(LOAD_MS)
+        }
     }
 
     private fun locked() = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
@@ -301,6 +359,8 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val MAX_ASKS = 2
         private const val MAX_STEPS = 15
         private const val STEP_TRIES = 3 // model moves for one plan step a skill couldn't do
+        private const val RADIO_SPAN = 6 // how far apart the options of one choice can be
+        private const val SAME_SETTING = 60 // "Dark theme" and "Dark mode" are one setting
         private val LOOKED_FOR = setOf(PlanStep.Verb.TAP, PlanStep.Verb.TURN_ON, PlanStep.Verb.TURN_OFF)
         private const val MAX_UNCHANGED = 3
         private const val MAX_STUCK = 2
@@ -310,7 +370,7 @@ class OnDeviceAgent(private val context: Context, private val executor: PhoneExe
         private const val SETTLE_MS = 1000L
         private const val WAIT_MS = 2000L
         private const val TASK_MS = 300_000L
-        private const val LOAD_TRIES = 8
+        private const val LOAD_TRIES = 12
         private const val LOAD_MS = 500L
         private const val MIN_ELEMENTS = 3
         private const val DONE = "हो गया।"

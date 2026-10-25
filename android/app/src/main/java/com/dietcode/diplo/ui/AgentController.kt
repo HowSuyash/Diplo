@@ -78,7 +78,15 @@ class AgentController(context: Context, private val scope: CoroutineScope) {
     private val appContext = context.applicationContext
     private val executor = PhoneExecutor(context)
     private val backend = BackendClient()
-    private val agent = OnDeviceAgent(appContext, executor)
+    // Plans come from the backend's model, from the user's words only; offline, from the phone's.
+    private val agent = OnDeviceAgent(appContext, executor) { text ->
+        try {
+            backend.plan(text)
+        } catch (e: IOException) {
+            Log.w(TAG, "backend can't plan \"$text\", planning on the phone: $e")
+            null
+        }
+    }
     private var appTask: Job? = null // OnDeviceAgent at work
     private var agentWaiting: CompletableDeferred<String?>? = null // its question, waiting for an answer
     private var agentConfirming = false // and whether that question wants a yes or no
