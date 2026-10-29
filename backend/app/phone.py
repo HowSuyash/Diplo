@@ -37,7 +37,7 @@ LIMITS = (
 _POLL_SECONDS = 1.5
 _MAX_SECONDS = 240  # a Flash step takes 3-5 s, so this is ~50 steps
 # A task that dies before it starts (no model API key) never gets a session, so it looks queued forever.
-_QUEUED_SECONDS = 30
+_QUEUED_SECONDS = 75  # ARTEMIS can take ~40 s to set up a phone it reconnected over WiFi
 # No new action for this long means it is stuck: ARTEMIS retries a failing model (rate limit, no
 # credits) for ~70 s per call while the task still reads "running". On Gemini's free tier, 503
 # "high demand" retries can hold one step for a minute, so leave room for that.
